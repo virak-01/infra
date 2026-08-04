@@ -6,8 +6,8 @@ and deployed as its own Deployment + Service, with one Ingress path-routing to
 both.
 
 ```
-employee/  index.html  style.css  Dockerfile   ->  employee-web:1.0.0  ->  /employee
-user/      index.html  style.css  Dockerfile   ->  user-web:1.0.0      ->  /user
+employee/  index.html  style.css  Dockerfile   ->  ranvirak/employee-web:1.0.0  ->  /employee
+user/      index.html  style.css  Dockerfile   ->  ranvirak/user-web:1.0.0      ->  /user
 k8s/       namespace.yaml  employee.yaml  user.yaml  ingress.yaml
 ```
 
@@ -24,12 +24,30 @@ open user/index.html
 
 ## Build
 
+The manifests pull from Docker Hub, so build under those names directly:
+
 ```sh
-docker build -t employee-web:1.0.0 employee
-docker build -t user-web:1.0.0 user
+docker build -t ranvirak/employee-web:1.0.0 employee
+docker build -t ranvirak/user-web:1.0.0 user
 ```
 
-Push to a registry your cluster can pull from and update the `image:` fields in
+If the `nginx:1.27-alpine` base cannot be pulled on your network, build against a
+base you already have cached — the committed pin stays untouched:
+
+```sh
+docker build --build-arg BASE=nginx:latest -t ranvirak/employee-web:1.0.0 employee
+```
+
+Push (needs a Docker Hub token with **Read & Write** scope — a read-only token
+fails with `unauthorized: access token has insufficient scopes`):
+
+```sh
+docker login -u ranvirak
+docker push ranvirak/employee-web:1.0.0
+docker push ranvirak/user-web:1.0.0
+```
+
+For a private registry instead, retag and update the `image:` fields in
 `k8s/employee.yaml` and `k8s/user.yaml`. For ECR:
 
 ```sh
@@ -43,8 +61,8 @@ aws ecr get-login-password --region $REGION \
 aws ecr create-repository --repository-name employee-web --region $REGION
 aws ecr create-repository --repository-name user-web --region $REGION
 
-docker tag employee-web:1.0.0 $REGISTRY/employee-web:1.0.0
-docker tag user-web:1.0.0     $REGISTRY/user-web:1.0.0
+docker tag ranvirak/employee-web:1.0.0 $REGISTRY/employee-web:1.0.0
+docker tag ranvirak/user-web:1.0.0     $REGISTRY/user-web:1.0.0
 docker push $REGISTRY/employee-web:1.0.0
 docker push $REGISTRY/user-web:1.0.0
 ```
@@ -106,8 +124,8 @@ Edit the HTML/CSS, then rebuild with a new tag and roll it out — avoid reusing
 tag, since nodes may keep the old cached layer:
 
 ```sh
-docker build -t $REGISTRY/employee-web:1.0.1 employee && docker push $REGISTRY/employee-web:1.0.1
-kubectl -n company set image deployment/employee-web nginx=$REGISTRY/employee-web:1.0.1
+docker build -t ranvirak/employee-web:1.0.1 employee && docker push ranvirak/employee-web:1.0.1
+kubectl -n company set image deployment/employee-web nginx=ranvirak/employee-web:1.0.1
 kubectl -n company rollout status deployment/employee-web
 ```
 # bubernetes

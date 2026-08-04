@@ -28,7 +28,7 @@ spec:
                     operator: DoesNotExist
       containers:
         - name: nginx
-          image: employee-web:1.0.0
+          image: ranvirak/employee-web:1.0.0
           ports:
             - name: http
               containerPort: 80
