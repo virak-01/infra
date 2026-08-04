@@ -83,9 +83,43 @@ kubectl -n company get ingress company-web -o jsonpath='{.status.loadBalancer.in
 # -> http://<hostname>/employee   and   http://<hostname>/user
 ```
 
-The Ingress assumes the AWS Load Balancer Controller (`ingressClassName: alb`).
-On a cluster running nginx-ingress instead, set `ingressClassName: nginx` and
-delete the `alb.ingress.kubernetes.io/*` annotations.
+The Ingress targets the community **ingress-nginx** controller
+(`ingressClassName: nginx`), which has to be installed in the cluster. An
+Ingress whose class has no controller is accepted by the API server and then
+silently ignored — it just sits there with an empty `ADDRESS`, which is the
+usual reason "the Ingress applied fine but nothing works".
+
+```sh
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm repo update
+helm install ingress-nginx ingress-nginx/ingress-nginx \
+  --namespace ingress-nginx --create-namespace \
+  --set controller.service.type=LoadBalancer
+
+kubectl -n ingress-nginx get svc ingress-nginx-controller
+```
+
+On EKS that Service provisions an AWS load balancer, and its `EXTERNAL-IP`
+becomes the entry point: `http://<address>/employee` and `http://<address>/user`.
+To skip the load balancer cost while testing, install with
+`--set controller.service.type=NodePort` and hit the node port directly.
+
+No rewrite annotations are needed. Each image serves its files under the
+matching subpath, so the path the browser requests is the path nginx looks up.
+
+To use an AWS ALB instead, set `ingressClassName: alb` and add:
+
+```yaml
+metadata:
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+```
+
+That route additionally needs the AWS Load Balancer Controller installed (OIDC
+provider, IRSA, IAM policy) and `kubernetes.io/role/elb=1` tags on the public
+subnets, or subnet auto-discovery fails.
 
 ## Worker nodes only
 
