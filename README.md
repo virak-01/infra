@@ -203,6 +203,45 @@ Still outstanding:
 - **Node port exposure** — scope the security group to the ingress controller's
   port instead of leaving 30000-32767 open.
 
+## Argo CD (optional)
+
+Git stays the source of truth; the browser is for watching diffs, syncing and
+rolling back. Install it, then register the Application:
+
+```sh
+kubectl create namespace argocd
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+kubectl -n argocd rollout status deploy/argocd-server
+
+kubectl apply -f argocd/application.yaml
+```
+
+Reach the UI without exposing it publicly — an internet-facing Argo CD is a
+cluster takeover waiting to happen:
+
+```sh
+kubectl -n argocd port-forward svc/argocd-server 8080:443
+# https://localhost:8080 — user "admin", password from:
+kubectl -n argocd get secret argocd-initial-admin-secret \
+  -o jsonpath='{.data.password}' | base64 -d
+```
+
+**Before the first sync, read the diff.** Sync is manual by design. The repo
+declares the Services as `ClusterIP`, so syncing removes whatever NodePort is
+currently serving traffic. Either finish the ingress-nginx install first, or
+capture the live Service into the repo so git matches reality:
+
+```sh
+kubectl -n company get svc employee-web -o yaml > /tmp/svc.yaml   # then edit into k8s/
+```
+
+`k8s/networkpolicy-ingress.yaml` carries `argocd.argoproj.io/sync-wave: "10"`,
+so it is applied last — after the Deployments are healthy — rather than
+simultaneously with everything else.
+
+Once the repo describes what is genuinely running, turn on automation by
+uncommenting the `automated:` block in `argocd/application.yaml`.
+
 ## Update a page
 
 Edit the HTML/CSS, then rebuild with a new tag and roll it out — avoid reusing a

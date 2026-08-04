@@ -1,0 +1,39 @@
+# Argo CD Application: keeps the `company` namespace matching k8s/ in this repo.
+#
+# Apply this AFTER installing Argo CD itself (see README). Note that argocd/
+# is not part of the synced path — Argo CD does not manage its own Application
+# here, so this file is applied once by hand.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: company-web
+  namespace: argocd
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/virak0001/bubernetes.git
+    targetRevision: main
+    path: k8s
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: company
+
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+
+    # Sync is deliberately MANUAL: no `automated:` block.
+    #
+    # Argo CD's job is making the cluster match git, and git says the Services
+    # are ClusterIP. The NodePort currently serving traffic exists only in the
+    # cluster, so the first sync will remove it. Manual sync means you see that
+    # in the diff and decide, instead of finding out from a dead URL.
+    #
+    # Once the Ingress serves your users and the repo describes what is really
+    # running, enable automation:
+    #
+    #   automated:
+    #     prune: true      # delete resources removed from git
+    #     selfHeal: true   # revert manual kubectl changes

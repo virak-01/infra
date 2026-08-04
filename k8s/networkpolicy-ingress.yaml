@@ -21,6 +21,11 @@ kind: NetworkPolicy
 metadata:
   name: web-allow-ingress
   namespace: company
+  annotations:
+    # Argo CD applies a directory in one shot, which would push this risky
+    # policy at the same time as everything else. A high sync wave makes it the
+    # last resource applied, after the Deployments are up and healthy.
+    argocd.argoproj.io/sync-wave: "10"
 spec:
   podSelector:
     matchExpressions:
