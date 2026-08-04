@@ -152,6 +152,57 @@ kubectl -n company port-forward svc/employee-web 8081:80   # http://localhost:80
 kubectl -n company port-forward svc/user-web     8082:80   # http://localhost:8082/user
 ```
 
+## Security
+
+Applied in the manifests:
+
+- **No service account token** — `automountServiceAccountToken: false` on both
+  Deployments. These pods never call the Kubernetes API, so a container
+  compromise hands over no cluster credential.
+- **Pod Security Standards** — the `company` namespace enforces `baseline`
+  (no privileged containers, hostNetwork, hostPath or host namespaces) and
+  warns/audits against `restricted`. Enforcement moves to `restricted` once the
+  images run as non-root.
+- **No egress** (`networkpolicy-egress.yaml`) — chiefly to block
+  `169.254.169.254`, the EC2 metadata endpoint that would otherwise hand a
+  compromised container the node's IAM role credentials.
+- **Ingress restricted to the controller** (`networkpolicy-ingress.yaml`) — so
+  no other pod can reach the web pods directly.
+
+Apply in this order, verifying between the last two:
+
+```sh
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/employee.yaml -f k8s/user.yaml
+kubectl apply -f k8s/networkpolicy-egress.yaml     # always safe
+kubectl apply -f k8s/networkpolicy-ingress.yaml    # only once the Ingress serves users
+kubectl -n company get pods -w                     # watch readiness after that last one
+```
+
+**Check that your CNI enforces NetworkPolicy first.** Flannel does not — it
+accepts NetworkPolicy objects and silently ignores them, which is worse than
+having none, because it looks protected:
+
+```sh
+kubectl -n kube-system get pods | grep -E 'flannel|calico|cilium|aws-node'
+```
+
+Only Calico, Cilium and similar actually enforce these. On Flannel, install
+Calico for policy enforcement, or treat the two policy files as documentation
+of intent rather than active controls.
+
+Still outstanding:
+
+- **TLS** — everything is plaintext HTTP. cert-manager + Let's Encrypt now that
+  traffic goes through ingress-nginx.
+- **Non-root containers** — rebuild on `nginxinc/nginx-unprivileged` (port
+  8080), then add `runAsNonRoot`, `readOnlyRootFilesystem`,
+  `capabilities: drop: [ALL]` and `seccompProfile: RuntimeDefault`.
+- **Base image CVEs** — build from the `1.27-alpine` pin rather than the Debian
+  `nginx:latest` fallback, pin by digest, and scan with `trivy image`.
+- **Node port exposure** — scope the security group to the ingress controller's
+  port instead of leaving 30000-32767 open.
+
 ## Update a page
 
 Edit the HTML/CSS, then rebuild with a new tag and roll it out — avoid reusing a

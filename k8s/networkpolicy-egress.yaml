@@ -1,0 +1,23 @@
+# Deny all outbound traffic from every pod in the namespace.
+#
+# The main thing this stops is a compromised container reaching the EC2
+# metadata service at 169.254.169.254 and reading the node's IAM role
+# credentials — the usual path from "container compromise" to "AWS account
+# compromise" on a self-managed cluster.
+#
+# These pods serve files off local disk: no database, no API calls, not even
+# DNS. So a blanket egress denial costs nothing. If a future container ever
+# does need to resolve names, add back a rule allowing UDP/TCP 53 to kube-dns.
+#
+# Safe to apply at any time — this constrains outbound traffic only, so it
+# cannot affect inbound requests, kubelet probes, or NodePort access.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all-egress
+  namespace: company
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  # No `egress:` rules at all means "permit nothing".

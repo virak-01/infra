@@ -1,0 +1,52 @@
+# Restrict who may reach the web pods: only the ingress-nginx controller.
+#
+# Without this, any pod in any namespace can open a connection straight to
+# these pods, bypassing the Ingress entirely.
+#
+# ---------------------------------------------------------------------------
+# APPLY THIS ONE LAST. Unlike the egress policy, it can take the site down:
+#
+#   * Direct NodePort access (e.g. :31585) stops working — that traffic does
+#     not come from the ingress-nginx namespace. Only apply once the Ingress
+#     is genuinely serving your users.
+#   * Depending on the CNI, kubelet liveness/readiness probes may also be
+#     blocked, since they originate from the node rather than from a pod. If
+#     pods start failing readiness right after applying this, that is the
+#     cause: uncomment the node-CIDR rule below with your VPC subnet range.
+#
+# Roll back with: kubectl -n company delete networkpolicy web-allow-ingress
+# ---------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-allow-ingress
+  namespace: company
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - employee-web
+          - user-web
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # kubernetes.io/metadata.name is applied automatically to every
+        # namespace by the API server, so this needs no manual labelling.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 80
+
+    # Uncomment and set to your node/VPC CIDR if kubelet probes get blocked,
+    # or to keep direct NodePort access working:
+    # - from:
+    #     - ipBlock:
+    #         cidr: 172.31.0.0/16
+    #   ports:
+    #     - protocol: TCP
+    #       port: 80

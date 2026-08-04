@@ -15,6 +15,11 @@ spec:
       labels:
         app: employee-web
     spec:
+      # This pod serves static files and never calls the Kubernetes API, so it
+      # has no use for a service account token. Not mounting one means a
+      # container compromise yields no cluster credential.
+      automountServiceAccountToken: false
+
       # Worker nodes only. No toleration for the control-plane taint is
       # declared either, so these pods can never land on a master.
       affinity:

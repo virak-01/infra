@@ -2,3 +2,16 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: company
+  labels:
+    # Pod Security Standards. `baseline` blocks the genuinely dangerous things
+    # — privileged containers, hostNetwork, hostPath mounts, host namespaces —
+    # while still permitting a container that runs as root.
+    #
+    # Enforcement is deliberately NOT `restricted` yet: these images run nginx
+    # as root, so `restricted` would refuse to start the pods. `warn`/`audit`
+    # report what would fail. Flip enforce to `restricted` once the images are
+    # rebuilt on nginxinc/nginx-unprivileged.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
