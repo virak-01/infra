@@ -15,6 +15,17 @@ spec:
       labels:
         app: user-web
     spec:
+      # Worker nodes only. No toleration for the control-plane taint is
+      # declared either, so these pods can never land on a master.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: DoesNotExist
+                  - key: node-role.kubernetes.io/master
+                    operator: DoesNotExist
       containers:
         - name: nginx
           image: user-web:1.0.0

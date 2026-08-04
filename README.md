@@ -69,6 +69,30 @@ The Ingress assumes the AWS Load Balancer Controller (`ingressClassName: alb`).
 On a cluster running nginx-ingress instead, set `ingressClassName: nginx` and
 delete the `alb.ingress.kubernetes.io/*` annotations.
 
+## Worker nodes only
+
+Both Deployments carry a required `nodeAffinity` rejecting any node labelled
+`node-role.kubernetes.io/control-plane` or `node-role.kubernetes.io/master`, and
+declare no tolerations — so a pod that could only be placed on a control-plane
+node stays `Pending` instead of landing there.
+
+On EKS this is a safety net rather than a fix: the control plane is AWS-managed
+and never appears as a node, so every node in the cluster is already a worker.
+It does the real work on kubeadm or self-managed clusters, where masters join
+the cluster as nodes.
+
+Confirm placement after deploying:
+
+```sh
+kubectl -n company get pods -o wide
+kubectl get nodes -L node-role.kubernetes.io/control-plane
+```
+
+If your workers carry a positive label instead (some clusters label them
+`node-role.kubernetes.io/worker=`), a `nodeSelector` on that label is the
+simpler equivalent — but it is not set by default, which is why the rule here
+excludes control-plane labels rather than requiring a worker label.
+
 ## Check it without an Ingress
 
 ```sh
