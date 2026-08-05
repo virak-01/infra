@@ -1,8 +1,10 @@
 # Every command in the docs, in one place, so README and reality cannot drift.
-# Override any variable on the command line: `make build TAG=1.0.1`.
+# Override any variable on the command line: `make deploy ENV=staging`.
+#
+# This repo deploys images; it does not build them. The sites are built and
+# pushed wherever their source lives, and the cluster pulls the tag named in
+# k8s/overlays/<env>/kustomization.yaml. Nothing here needs Docker.
 
-REGISTRY ?= ranvirak
-TAG      ?= 1.0.0
 ENV      ?= prod
 SITES    := employee user
 
@@ -10,13 +12,13 @@ OVERLAY  := k8s/overlays/$(ENV)
 NS       := company
 
 .DEFAULT_GOAL := help
-.PHONY: help envs render validate diff deploy build push rollout
+.PHONY: help envs render validate diff deploy rollout
 
 help: ## Show this help
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
 	  | awk -F':.*?## ' '{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 	@echo
-	@echo "  vars: REGISTRY=$(REGISTRY) TAG=$(TAG) ENV=$(ENV)"
+	@echo "  vars: ENV=$(ENV)   (overlays: $$(ls k8s/overlays | tr '\n' ' '))"
 	@echo "  note: staging and prod are separate clusters — check your context"
 	@echo "        before deploy/diff: kubectl config current-context"
 
@@ -46,17 +48,6 @@ deploy: ## Apply the overlay
 	@echo "context: $$(kubectl config current-context)"
 	kubectl apply -k $(OVERLAY)
 	kubectl -n $(NS) get pods,svc,ingress
-
-build: ## Build both site images
-	@for site in $(SITES); do \
-	  echo "==> $$site"; \
-	  docker build -t $(REGISTRY)/$$site-web:$(TAG) apps/$$site || exit 1; \
-	done
-
-push: ## Push both site images (needs a Read & Write Docker Hub token)
-	@for site in $(SITES); do \
-	  docker push $(REGISTRY)/$$site-web:$(TAG) || exit 1; \
-	done
 
 rollout: ## Wait for both Deployments to finish rolling out
 	@for site in $(SITES); do \

@@ -1,14 +1,18 @@
 # Static sites on Kubernetes
 
-Two static sites — **employee** (internal portal) and **user** (customer account
-page) — each nothing but `index.html` + `style.css`, baked into an nginx image
-and deployed as its own Deployment + Service, with one Ingress path-routing to
-both. Argo CD keeps the cluster matching this repo.
+Deployment manifests for two static sites — **employee** (internal portal) and
+**user** (customer account page) — each an nginx image serving `index.html` +
+`style.css`, deployed as its own Deployment + Service, with one Ingress
+path-routing to both. Argo CD keeps the cluster matching this repo.
+
+**This repo deploys images; it does not build them.** The site source lives
+elsewhere and publishes to a registry; here you name a tag and the cluster pulls
+it. Nothing in this repo needs Docker.
 
 ```
-apps/
-  employee/   index.html  style.css  Dockerfile   ->  ranvirak/employee-web  ->  /employee
-  user/       index.html  style.css  Dockerfile   ->  ranvirak/user-web      ->  /user
+registry (Docker Hub)
+  ranvirak/employee-web:<tag>   ->  /employee
+  ranvirak/user-web:<tag>       ->  /user
 
 k8s/
   base/
@@ -19,9 +23,11 @@ k8s/
   overlays/
     staging/    tag + replicas for the staging cluster
     prod/       tag + replicas for the prod cluster
+    ec2-test/   throwaway single-node box — NOT for real use
 
 argocd/       one Application per environment
-docs/         deployment, security, Argo CD
+docs/         deployment, security, Argo CD, EC2 testing
+local/        kind config for a local learning cluster
 ```
 
 Staging and prod are **separate clusters**, so both use the `company` namespace
@@ -38,19 +44,15 @@ purpose — a tag is a release decision, so it lives in an overlay.
 ## Quickstart
 
 ```sh
-open apps/employee/index.html   # preview, no cluster needed
-
-make build TAG=1.0.0            # build both images
-make push  TAG=1.0.0            # push (needs a Read & Write Docker Hub token)
-
 make envs                       # what each environment is pinned to
 make render ENV=staging         # print exactly what would be applied
 make diff   ENV=staging         # what would change in the live cluster
 make deploy ENV=staging         # apply k8s/overlays/staging
+make rollout ENV=staging        # wait for both Deployments
 ```
 
-`make` with no target lists everything. `ENV` defaults to `prod`; every other
-variable is overridable too: `make build REGISTRY=myregistry TAG=1.0.1`.
+`make` with no target lists everything. `ENV` defaults to `prod` and is the only
+variable you normally set.
 
 > `ENV` selects the overlay, **not the cluster.** Since the two environments
 > live on different clusters, run `kubectl config current-context` before any
@@ -58,14 +60,8 @@ variable is overridable too: `make build REGISTRY=myregistry TAG=1.0.1`.
 
 ## Shipping a change
 
-Edit the HTML/CSS, then build and push a **new** tag — reusing one leaves nodes
-serving a stale cached layer:
-
-```sh
-make build push TAG=1.0.1
-```
-
-Set that tag in [`k8s/overlays/staging/`](k8s/overlays/staging/kustomization.yaml),
+Once a new tag has been published to the registry, deploying it is a one-line
+edit. Set it in [`k8s/overlays/staging/`](k8s/overlays/staging/kustomization.yaml),
 commit, and let staging prove it:
 
 ```sh
@@ -73,9 +69,14 @@ kubectl config use-context <staging>
 make deploy rollout ENV=staging
 ```
 
-Promote by setting the same tag in [`k8s/overlays/prod/`](k8s/overlays/prod/kustomization.yaml)
+Promote by setting the **same** tag in [`k8s/overlays/prod/`](k8s/overlays/prod/kustomization.yaml)
 and committing. Argo CD syncs it, or apply it yourself with
 `make deploy rollout ENV=prod`. `make envs` shows how far apart the two are.
+
+Never reuse a tag. Nodes cache layers, so the same tag can mean two different
+images across the fleet — and a rollback to it lands somewhere undefined. CI
+fails any overlay that renders an untagged image, since that resolves to
+`:latest`.
 
 ## Docs
 
@@ -84,6 +85,7 @@ and committing. Argo CD syncs it, or apply it yourself with
 | [Deployment](docs/deployment.md) | building, ECR, installing ingress-nginx, ALB, port-forward checks, worker-node placement |
 | [Security](docs/security.md) | Pod Security Standards, the two NetworkPolicies, the CNI caveat, what is still outstanding |
 | [Argo CD](docs/argocd.md) | installing it, the Application, why sync is manual, sync waves |
+| [EC2 testing](docs/ec2-testing.md) | a throwaway k3s box: security groups, the single-node trap, and testing the egress policy against real instance metadata |
 
 ## Requirements
 

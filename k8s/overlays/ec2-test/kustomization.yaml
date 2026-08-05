@@ -1,0 +1,39 @@
+# TEST ONLY — a single-node k3s box on EC2. Never deploy this to anything real.
+#
+# The base requires a node WITHOUT the control-plane label and tolerates no
+# control-plane taint, which is correct and is exactly what you want in
+# production. On a one-node cluster that node IS the control plane, so every pod
+# stays Pending forever.
+#
+# This overlay drops that requirement so a single instance can serve the site.
+# The cost is real and worth naming: **the nodeAffinity rule is not exercised
+# here.** If you want to test that rule, add a second k3s agent node and deploy
+# ../staging instead.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+images:
+  - name: ranvirak/employee-web
+    newTag: 1.0.0
+  - name: ranvirak/user-web
+    newTag: 1.0.0
+
+# One replica each: a t3.small has ~2 GB of RAM and is also running the k3s
+# control plane and the ingress controller.
+replicas:
+  - name: employee-web
+    count: 1
+  - name: user-web
+    count: 1
+
+patches:
+  # A strategic merge patch cannot delete a field, so this is a JSON 6902
+  # remove. Targeting by kind applies it to both Deployments.
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/affinity

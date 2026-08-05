@@ -1,0 +1,38 @@
+# Local learning cluster. Not part of the deployment — delete this directory if
+# you don't want it in the repo.
+#
+#   kind create cluster --name company --config local/kind-cluster.yaml
+#
+# Two things here are load-bearing:
+#
+# 1. WORKER NODES. The Deployments require a node WITHOUT the
+#    node-role.kubernetes.io/control-plane label, and declare no toleration for
+#    its taint. A default single-node kind cluster has only a control-plane
+#    node, so every pod would sit Pending forever. Two workers also let you
+#    watch where the scheduler actually places the 2 prod replicas.
+#
+# 2. extraPortMappings + ingress-ready. ingress-nginx's kind manifest selects
+#    nodes labelled `ingress-ready=true` and binds host ports on them. Without
+#    the mapping, the Ingress works inside the cluster but you cannot reach it
+#    from your browser.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+
+  # The ingress node. Host :8080 -> this node's :80, so the site is reachable
+  # at http://localhost:8080/employee. Port 8080 rather than 80 to avoid
+  # colliding with anything already listening on your machine.
+  - role: worker
+    labels:
+      ingress-ready: "true"
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 8080
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 8443
+        protocol: TCP
+
+  # A second worker, so `replicas: 2` has somewhere to spread to.
+  - role: worker

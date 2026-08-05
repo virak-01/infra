@@ -1,64 +1,65 @@
 # Deployment
 
-## Build
+## Images
 
-The manifests pull from Docker Hub, so build under those names directly:
+This repo does not build images. It names them.
 
-```sh
-make build TAG=1.0.0
+```
+     built elsewhere                    here                  the cluster
+  ┌────────────────────┐        ┌──────────────────┐      ┌──────────────┐
+  │ site source repo   │  push  │ overlays/<env>/  │      │   kubelet    │
+  │ docker build/push  │ ─────► │   newTag: 1.0.0  │ ───► │ pulls the tag│
+  └────────────────────┘        └──────────────────┘      └──────────────┘
 ```
 
-which is:
+The registry is the handoff. Deploying a new version is a one-line edit to an
+overlay's `newTag:` — never a rebuild. Nothing here requires Docker, which is
+why a cluster node running containerd can deploy this repo perfectly well.
+
+Currently published (public, no pull secret needed):
+
+| Image | Serves |
+|---|---|
+| `ranvirak/employee-web` | `/employee` |
+| `ranvirak/user-web` | `/user` |
+
+Check what tags exist before pinning one:
 
 ```sh
-docker build -t ranvirak/employee-web:1.0.0 apps/employee
-docker build -t ranvirak/user-web:1.0.0     apps/user
+curl -s https://hub.docker.com/v2/repositories/ranvirak/employee-web/tags/ \
+  | tr ',' '\n' | grep '"name"'
 ```
 
-If the `nginx:1.27-alpine` base cannot be pulled on your network, build against a
-base you already have cached — the committed pin stays untouched:
+Each image serves its files under a matching subpath
+(`/usr/share/nginx/html/employee/`), which is why the Ingress needs no rewrite
+rules and relative links to `style.css` resolve.
 
-```sh
-docker build --build-arg BASE=nginx:latest -t ranvirak/employee-web:1.0.0 apps/employee
-```
+### Pulling from a private registry instead
 
-Push (needs a Docker Hub token with **Read & Write** scope — a read-only token
-fails with `unauthorized: access token has insufficient scopes`):
-
-```sh
-docker login -u ranvirak
-make push TAG=1.0.0
-```
-
-### A private registry instead
-
-Retag, push, and point the overlay at the new names. For ECR:
-
-```sh
-ACCOUNT=123456789012
-REGION=ap-southeast-1
-REGISTRY=$ACCOUNT.dkr.ecr.$REGION.amazonaws.com
-
-aws ecr get-login-password --region $REGION \
-  | docker login --username AWS --password-stdin $REGISTRY
-
-aws ecr create-repository --repository-name employee-web --region $REGION
-aws ecr create-repository --repository-name user-web --region $REGION
-
-make build push REGISTRY=$REGISTRY TAG=1.0.0
-```
-
-Then in each overlay's `kustomization.yaml`, add `newName` beside the existing
-`newTag`:
+Point the overlays at the new names — no Deployment manifest changes, which is
+the point of the overlay. For ECR:
 
 ```yaml
+# k8s/overlays/prod/kustomization.yaml
 images:
   - name: ranvirak/employee-web
     newName: 123456789012.dkr.ecr.ap-southeast-1.amazonaws.com/employee-web
     newTag: 1.0.0
 ```
 
-No Deployment manifest changes — that is the point of the overlay.
+A private registry also needs pull credentials in the namespace:
+
+```sh
+kubectl -n company create secret docker-registry ecr-creds \
+  --docker-server=123456789012.dkr.ecr.ap-southeast-1.amazonaws.com \
+  --docker-username=AWS \
+  --docker-password="$(aws ecr get-login-password --region ap-southeast-1)"
+```
+
+then reference it from the pod spec via `imagePullSecrets`. On EKS the better
+answer is to skip the secret entirely and grant the **node role** ECR pull
+permission (`AmazonEC2ContainerRegistryReadOnly`), since ECR tokens expire every
+12 hours and a stored secret goes stale.
 
 ## Deploy
 
@@ -183,9 +184,9 @@ kubectl config current-context
 
 ### Promoting a build
 
-```sh
-make build push TAG=1.0.1              # one image, both environments
+Starts from a tag already published to the registry — promotion never builds.
 
+```sh
 # 1. staging
 #    set newTag: 1.0.1 in k8s/overlays/staging/kustomization.yaml, commit
 kubectl config use-context <staging>
@@ -199,9 +200,11 @@ make diff ENV=prod                     # read it
 make deploy rollout ENV=prod
 ```
 
-Promotion moves a tag that already exists; it never rebuilds. A rebuild would
-produce a different image under the same name, which defeats the point of
-having tested staging.
+The two overlays name the **same** tag, so prod runs the exact bytes staging
+proved. Rebuilding between the two would produce a different image under the
+same name and throw away everything staging told you.
+
+`make envs` shows how far apart the environments have drifted.
 
 ### Adding a third environment
 

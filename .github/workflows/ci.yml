@@ -61,24 +61,17 @@ jobs:
               || { echo "::error file=$app::points at '$path', which has no kustomization.yaml"; exit 1; }
           done
 
-  images:
-    name: Lint and build images
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        site: [employee, user]
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: hadolint/hadolint-action@v3.1.0
-        with:
-          dockerfile: apps/${{ matrix.site }}/Dockerfile
-          # Only errors block. The ARG-based FROM is deliberate (it lets you
-          # build against a cached base), and hadolint flags it as a warning.
-          failure-threshold: error
-
-      - name: Build
-        # Build only — publishing stays a deliberate local `make push`, so a
-        # merge can never move a tag that the cluster is already pulling.
-        run: docker build -t ${{ matrix.site }}-web:ci apps/${{ matrix.site }}
+      - name: Check every image reference is tagged
+        # An overlay that forgets newTag renders a bare image name, which the
+        # cluster resolves to :latest — a silently moving target that makes
+        # rollbacks meaningless. Only the base is allowed to be untagged.
+        run: |
+          for overlay in k8s/overlays/*/; do
+            images=$(kubectl kustomize "$overlay" | awk '/^ +- image:/ {print $3}')
+            untagged=$(echo "$images" | grep -v ':' || true)
+            if [ -n "$untagged" ]; then
+              echo "::error::$overlay renders untagged image(s): $untagged"
+              exit 1
+            fi
+            echo "$images" | sed "s|^|  ok  $overlay |"
+          done
