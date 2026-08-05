@@ -64,8 +64,10 @@ the next step.
 The restructure lives on a branch, not `main`:
 
 ```sh
-git clone -b feature/new-layout https://github.com/virak0001/bubernetes.git
-cd bubernetes
+git clone https://github.com/virak-01/infra.git
+cd infra
+# The restructure may still be on a branch rather than main:
+#   git checkout feature/new-layout
 make envs
 ```
 

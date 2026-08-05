@@ -22,7 +22,7 @@ spec:
   project: default
 
   source:
-    repoURL: https://github.com/virak0001/bubernetes.git
+    repoURL: https://github.com/virak-01/infra.git
     targetRevision: main
     path: k8s/overlays/staging
 

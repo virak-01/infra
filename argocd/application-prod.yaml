@@ -15,7 +15,7 @@ spec:
   project: default
 
   source:
-    repoURL: https://github.com/virak0001/bubernetes.git
+    repoURL: https://github.com/virak-01/infra.git
     targetRevision: main
     # An overlay, not the raw manifest directory: k8s/base renders images
     # untagged, so only an overlay describes something deployable. Argo CD
