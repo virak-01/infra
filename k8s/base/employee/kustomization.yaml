@@ -1,0 +1,32 @@
+# The employee site: the shared ../web template plus the three things that
+# actually differ between the two sites.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../web
+
+# `web` -> `employee-web`, for both the Deployment and the Service. The Ingress
+# in ../ingress.yaml refers to that final name.
+namePrefix: employee-
+
+# Rewrites metadata labels, the pod template, and — because of
+# includeSelectors — the Deployment selector and Service selector, so the
+# Service still finds exactly this site's pods.
+#
+# The key stays `app`, so this replaces the template's `app: web` rather than
+# adding a second selector label. That keeps the rendered selector identical to
+# what the cluster already runs; a Deployment's selector is immutable, and a
+# second key here would make every apply fail against the live object.
+labels:
+  - pairs:
+      app: employee-web
+    includeSelectors: true
+
+# Name only — the tag belongs to the overlay.
+images:
+  - name: web
+    newName: ranvirak/employee-web
+
+patches:
+  - path: patch-probes.yaml

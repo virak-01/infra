@@ -1,0 +1,28 @@
+# The whole `company` namespace, environment-independent.
+#
+# Not applied directly: the two site images render untagged here, so deploy an
+# overlay (../overlays/prod) instead. `kubectl kustomize k8s/base` is still the
+# quickest way to see the shared shape.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Owns the namespace field for every resource below, so no individual manifest
+# repeats it and none can drift into the wrong namespace.
+namespace: company
+
+resources:
+  - namespace.yaml
+  - employee
+  - user
+  - ingress.yaml
+  - networkpolicy-egress.yaml
+  - networkpolicy-ingress.yaml
+
+# Provenance labels only. includeSelectors is false — and must stay false:
+# these keys would otherwise land in the Deployments' immutable selectors and
+# break every apply against the running objects.
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: company-web
+      app.kubernetes.io/managed-by: kustomize
+    includeSelectors: false

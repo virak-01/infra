@@ -1,0 +1,16 @@
+# See ../employee/patch-probes.yaml for the reasoning.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  template:
+    spec:
+      containers:
+        - name: nginx
+          readinessProbe:
+            httpGet:
+              path: /user/index.html
+          livenessProbe:
+            httpGet:
+              path: /user/index.html

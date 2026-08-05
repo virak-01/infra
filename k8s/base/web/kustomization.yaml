@@ -1,0 +1,8 @@
+# Reusable static-site component. Not applied directly — it renders resources
+# named `web` with an untagged image. Consumed by ../employee and ../user.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - deployment.yaml
+  - service.yaml

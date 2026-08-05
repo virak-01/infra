@@ -1,0 +1,21 @@
+# Probe the subpath the Ingress actually serves, not just `/`. The image copies
+# the site to both locations, so `/` would stay green even if the subpath copy
+# were missing — which is the copy users hit.
+#
+# Targets the pre-namePrefix name (`web`): patches apply while the resource
+# still carries the template's name, before namePrefix runs.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  template:
+    spec:
+      containers:
+        - name: nginx
+          readinessProbe:
+            httpGet:
+              path: /employee/index.html
+          livenessProbe:
+            httpGet:
+              path: /employee/index.html

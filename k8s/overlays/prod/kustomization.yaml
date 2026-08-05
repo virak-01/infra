@@ -1,0 +1,29 @@
+# Production. What Argo CD syncs (see argocd/application-prod.yaml).
+#
+# Runs on its own cluster, so it shares the `company` namespace and every
+# resource name with ../staging — only the tag and the replica count differ.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# The release. Bumping a tag here is the deploy — the single line a rollout
+# changes, and the single line to revert.
+#
+# Avoid reusing a tag: nodes may keep the old cached layer, so the same tag can
+# mean two different images across the fleet.
+images:
+  - name: ranvirak/employee-web
+    newTag: 1.0.0
+  - name: ranvirak/user-web
+    newTag: 1.0.0
+
+# Stated explicitly even though it matches the base default, so that reading
+# this file beside ../staging/kustomization.yaml shows the whole difference
+# between the environments without having to open the base.
+replicas:
+  - name: employee-web
+    count: 2
+  - name: user-web
+    count: 2

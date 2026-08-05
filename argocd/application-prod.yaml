@@ -1,8 +1,11 @@
-# Argo CD Application: keeps the `company` namespace matching k8s/ in this repo.
+# Argo CD Application for PRODUCTION: keeps the `company` namespace matching
+# k8s/overlays/prod in this repo. Staging is a separate cluster with its own
+# Argo CD — see application-staging.yaml.
 #
-# Apply this AFTER installing Argo CD itself (see README). Note that argocd/
-# is not part of the synced path — Argo CD does not manage its own Application
-# here, so this file is applied once by hand.
+# Apply this AFTER installing Argo CD itself (see docs/argocd.md), against the
+# prod cluster's context. Note that argocd/ is not part of the synced path —
+# Argo CD does not manage its own Application here, so this file is applied
+# once by hand.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -14,7 +17,10 @@ spec:
   source:
     repoURL: https://github.com/virak0001/bubernetes.git
     targetRevision: main
-    path: k8s
+    # An overlay, not the raw manifest directory: k8s/base renders images
+    # untagged, so only an overlay describes something deployable. Argo CD
+    # detects the kustomization.yaml and renders it — no plugin config needed.
+    path: k8s/overlays/prod
 
   destination:
     server: https://kubernetes.default.svc

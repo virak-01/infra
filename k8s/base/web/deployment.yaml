@@ -1,19 +1,24 @@
+# The shared shape of a static-site Deployment. Both sites were byte-identical
+# here except for name, image, and probe path, so those three live in the
+# per-site kustomizations (../employee, ../user) and everything else lives once.
+#
+# `name` and the `app` label are placeholders: each site's kustomization applies
+# a namePrefix and a label transformer, so nothing named `web` is ever applied.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: employee-web
-  namespace: company
+  name: web
   labels:
-    app: employee-web
+    app: web
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: employee-web
+      app: web
   template:
     metadata:
       labels:
-        app: employee-web
+        app: web
     spec:
       # This pod serves static files and never calls the Kubernetes API, so it
       # has no use for a service account token. Not mounting one means a
@@ -33,7 +38,10 @@ spec:
                     operator: DoesNotExist
       containers:
         - name: nginx
-          image: ranvirak/employee-web:1.0.0
+          # Untagged on purpose. Each site's kustomization rewrites the name
+          # (`web` -> ranvirak/<site>-web) and the overlay pins the tag, so an
+          # overlay is the only thing that renders a deployable image ref.
+          image: web
           ports:
             - name: http
               containerPort: 80
@@ -44,29 +52,18 @@ spec:
             limits:
               cpu: 100m
               memory: 64Mi
+          # Probe paths are per-site: each site patches these to the subpath the
+          # Ingress actually serves, so a probe failure means the served URL is
+          # broken, not merely that nginx is up.
           readinessProbe:
             httpGet:
-              path: /employee/index.html
+              path: /index.html
               port: http
             initialDelaySeconds: 2
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /employee/index.html
+              path: /index.html
               port: http
             initialDelaySeconds: 5
             periodSeconds: 20
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: employee-web
-  namespace: company
-spec:
-  type: ClusterIP
-  selector:
-    app: employee-web
-  ports:
-    - name: http
-      port: 80
-      targetPort: http

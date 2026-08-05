@@ -1,0 +1,21 @@
+# The user site. Mirror of ../employee — see that file for why each field is
+# here; only the three per-site values differ.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../web
+
+namePrefix: user-
+
+labels:
+  - pairs:
+      app: user-web
+    includeSelectors: true
+
+images:
+  - name: web
+    newName: ranvirak/user-web
+
+patches:
+  - path: patch-probes.yaml

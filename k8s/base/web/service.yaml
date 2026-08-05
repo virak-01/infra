@@ -1,0 +1,14 @@
+# Placeholder name/selector, same as the Deployment: the per-site kustomization
+# renames this to <site>-web and rewrites the selector to match its pods.
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+spec:
+  type: ClusterIP
+  selector:
+    app: web
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

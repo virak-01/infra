@@ -1,0 +1,29 @@
+# Staging. Its own cluster, so the namespace, Ingress and every name stay
+# identical to prod — the kubectl context is what selects the environment.
+# That sameness is the point: staging is only worth testing against if it is
+# shaped like prod.
+#
+#   kubectl config use-context <staging>
+#   make deploy ENV=staging
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# Staging normally runs ahead of prod: bump the tag here, verify, then set the
+# same tag in ../prod. Both sit at 1.0.0 today because nothing newer is built.
+images:
+  - name: ranvirak/employee-web
+    newTag: 1.0.0
+  - name: ranvirak/user-web
+    newTag: 1.0.0
+
+# One replica is enough to serve staging traffic. Declared here rather than
+# patched into the base, so the two overlays can be read side by side and the
+# difference is obvious.
+replicas:
+  - name: employee-web
+    count: 1
+  - name: user-web
+    count: 1

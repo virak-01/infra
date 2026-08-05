@@ -20,7 +20,6 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: web-allow-ingress
-  namespace: company
   annotations:
     # Argo CD applies a directory in one shot, which would push this risky
     # policy at the same time as everything else. A high sync wave makes it the

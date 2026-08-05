@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A branch's older runs are pointless once a newer commit exists.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  manifests:
+    name: Render and validate manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.30.5
+
+      - name: Install kubeconform
+        run: |
+          curl -sSfL \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin kubeconform
+
+      - name: Render every overlay
+        # A kustomize error is the most common way this repo breaks, and it is
+        # invisible until someone deploys. Fail here instead.
+        run: |
+          for overlay in k8s/overlays/*/; do
+            echo "::group::$overlay"
+            kubectl kustomize "$overlay"
+            echo "::endgroup::"
+          done
+
+      - name: Validate against the Kubernetes API schema
+        # -strict rejects unknown fields, which is what catches a typo'd key
+        # that the API server would otherwise silently drop.
+        run: |
+          for overlay in k8s/overlays/*/; do
+            kubectl kustomize "$overlay" \
+              | kubeconform -strict -summary -kubernetes-version 1.30.0 -
+          done
+
+      - name: Check every Argo CD Application points somewhere real
+        # Applications are CRDs, so no bundled schema validates them. The
+        # failure that actually happens is a path drifting from the tree —
+        # which Argo CD reports only at sync time, in the cluster.
+        run: |
+          for app in argocd/*.yaml; do
+            path=$(grep -E '^[[:space:]]+path:' "$app" | awk '{print $2}')
+            echo "$app -> $path"
+            test -f "$path/kustomization.yaml" \
+              || { echo "::error file=$app::points at '$path', which has no kustomization.yaml"; exit 1; }
+          done
+
+  images:
+    name: Lint and build images
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        site: [employee, user]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: apps/${{ matrix.site }}/Dockerfile
+          # Only errors block. The ARG-based FROM is deliberate (it lets you
+          # build against a cached base), and hadolint flags it as a warning.
+          failure-threshold: error
+
+      - name: Build
+        # Build only — publishing stays a deliberate local `make push`, so a
+        # merge can never move a tag that the cluster is already pulling.
+        run: docker build -t ${{ matrix.site }}-web:ci apps/${{ matrix.site }}
