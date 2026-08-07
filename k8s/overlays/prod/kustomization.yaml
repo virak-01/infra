@@ -27,7 +27,7 @@ namespace: company
 images:
   - name: employee-web
     newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/website
-    newTag: staging-332218de
+    newTag: staging-2a079651
   - name: user-web
     newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/website
     newTag: staging-332218de
