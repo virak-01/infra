@@ -15,7 +15,7 @@ AWS_REGION   ?= us-east-1
 ECR_REGISTRY ?= 043309361013.dkr.ecr.$(AWS_REGION).amazonaws.com
 
 .DEFAULT_GOAL := help
-.PHONY: help envs current render validate diff deploy rollout aws-creds ecr-secret
+.PHONY: help envs current render validate diff deploy rollout app-config aws-creds ecr-secret
 
 help: ## Show this help
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -73,6 +73,23 @@ deploy: ## Apply the overlay
 	@echo "context: $$(kubectl config current-context)"
 	kubectl apply -k $(OVERLAY)
 	kubectl -n $(NS) get pods,svc,ingress
+
+app-config: ## Load k8s/overlays/$(ENV)/app-config.env into the cluster as a ConfigMap
+	@# The overlay has no configMapGenerator on purpose: app-config.env is
+	@# gitignored, and Argo CD renders from git — a generator pointing at a file
+	@# absent from the repo fails the whole sync. So the ConfigMap is applied
+	@# out of band, the same way ecr-creds is.
+	@#
+	@# Trade-off: no content hash, so changing a value does NOT roll the pods.
+	@# The rollout restart below is deliberate, not incidental.
+	@test -f $(OVERLAY)/app-config.env \
+	  || { echo "ERROR: $(OVERLAY)/app-config.env missing — copy app-config.env.example"; exit 1; }
+	@echo "context: $$(kubectl config current-context)"
+	kubectl -n $(NS) create configmap website-config \
+	  --from-env-file=$(OVERLAY)/app-config.env \
+	  --dry-run=client -o yaml | kubectl apply -f -
+	@echo "→ restarting so the new values are picked up"
+	@kubectl -n $(NS) rollout restart deploy/employee-web deploy/user-web 2>/dev/null || true
 
 aws-creds: ## Store the IAM key the refresh job uses: make aws-creds AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...
 	@# Every line is @-prefixed: make echoes recipes by default, which would

@@ -40,21 +40,3 @@ replicas:
     count: 2
   - name: user-web
     count: 2
-
-# Environment-varying app config — see ../staging/kustomization.yaml. Stated
-# explicitly rather than omitted: the generator must exist in every overlay,
-# because the base declares envFrom against it.
-# Values come from app-config.env, which is gitignored — this file must never
-# carry configuration. Copy app-config.env.example and fill it in per cluster.
-#
-# `envs:` keeps the generator's content hash, so editing the file still rolls
-# the pods on the next apply. Reading the values from a Secret instead would
-# lose that, which is the trade for anything genuinely sensitive.
-#
-# NUXT_PUBLIC_* is compiled into the page and served to every browser, so it is
-# public by construction. Real secrets belong in a Kubernetes Secret consumed
-# with envFrom.secretRef, created out of band like ecr-creds — never here.
-configMapGenerator:
-  - name: website-config
-    envs:
-      - app-config.env
