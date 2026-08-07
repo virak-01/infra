@@ -30,6 +30,17 @@ jobs:
             https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
             | sudo tar -xz -C /usr/local/bin kubeconform
 
+      - name: Seed per-cluster app config
+        # app-config.env is gitignored — real values live only on the cluster
+        # operator's machine. configMapGenerator still needs *a* file to render,
+        # so CI builds one from the committed template. This also makes CI fail
+        # if someone adds a key to an overlay without adding it to .example,
+        # which is the usual way the template goes stale.
+        run: |
+          for overlay in k8s/overlays/*/; do
+            cp "$overlay/app-config.env.example" "$overlay/app-config.env"
+          done
+
       - name: Render every overlay
         # A kustomize error is the most common way this repo breaks, and it is
         # invisible until someone deploys. Fail here instead.

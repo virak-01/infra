@@ -56,6 +56,18 @@ spec:
           ports:
             - name: http
               containerPort: 3000
+
+          # Environment-varying app config. Each overlay generates this
+          # ConfigMap, so kustomize appends a content hash to its name and
+          # rewrites this reference — changing a value therefore changes the pod
+          # template and rolls the pods. A hand-written ConfigMap would not:
+          # edits would apply only to pods that happened to restart later.
+          #
+          # Per-site values (NUXT_APP_BASE_URL) stay in ../<site>/patch-probes.yaml
+          # instead, because they do not vary by environment.
+          envFrom:
+            - configMapRef:
+                name: website-config
           resources:
             requests:
               cpu: 10m

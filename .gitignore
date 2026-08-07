@@ -2,3 +2,7 @@
 .env
 .env.*
 !.env.example
+
+# Per-cluster app config consumed by configMapGenerator. Values are supplied
+# outside git; only the .example templates are committed.
+k8s/overlays/*/app-config.env
