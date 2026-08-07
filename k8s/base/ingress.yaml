@@ -2,23 +2,23 @@
 #   http://<address>/employee  -> employee-web
 #   http://<address>/user      -> user-web
 #
-# Annotations below target the AWS Load Balancer Controller (EKS).
-# For a plain nginx-ingress cluster, change ingressClassName to "nginx"
-# and drop the alb.ingress.kubernetes.io/* annotations — no rewrite rules
-# are needed either way, because each image already serves its files under
-# the matching subpath.
+# Targets the community ingress-nginx controller, which must be installed in
+# the cluster — see docs/deployment.md. No rewrite annotations are needed:
+# each image already serves its files under the matching subpath.
+#
+# To move back to the AWS Load Balancer Controller on EKS, set ingressClassName
+# to "alb" and restore its annotations:
+#   alb.ingress.kubernetes.io/scheme: internet-facing
+#   alb.ingress.kubernetes.io/target-type: ip
+#   alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+#   alb.ingress.kubernetes.io/healthcheck-path: /
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: company-web
   namespace: company
-  annotations:
-    alb.ingress.kubernetes.io/scheme: internet-facing
-    alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
-    alb.ingress.kubernetes.io/healthcheck-path: /
 spec:
-  ingressClassName: alb
+  ingressClassName: nginx
   rules:
     - http:
         paths:
