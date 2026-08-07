@@ -1,45 +1,11 @@
-# Single Ingress fronting both sites:
-#   http://<address>/employee  -> employee-web
-#   http://<address>/user      -> user-web
-#
-# Targets the community ingress-nginx controller, which must be installed in
-# the cluster — see docs/deployment.md.
-#
-# The prefix is stripped before the request reaches the backend, so the app
-# behind it serves at / and knows nothing about its subpath:
-#
-#   /employee          -> /
-#   /employee/         -> /
-#   /employee/foo/bar  -> /foo/bar
-#
-# How the three annotations combine:
-#   use-regex        makes the controller treat `path` as a regular expression
-#   rewrite-target   /$2 substitutes the second capture group, i.e. everything
-#                    after the prefix. $1 is the (/|$) separator, which is
-#                    discarded — that is what makes the bare /employee work
-#                    rather than 404.
-#   pathType         must be ImplementationSpecific; Prefix and Exact are
-#                    matched literally and would never apply the regex.
-#
-# The backend port is the Service port (80), not the container port. The
-# Service maps 80 -> targetPort `http`, which the pod currently publishes on
-# 3000, so this stays 80 regardless of what the image listens on.
-#
-# To move back to the AWS Load Balancer Controller on EKS, set ingressClassName
-# to "alb" and swap the annotations — ALB spells rewrites differently, as
-# actions/conditions rather than regex captures:
-#   alb.ingress.kubernetes.io/scheme: internet-facing
-#   alb.ingress.kubernetes.io/target-type: ip
-#   alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
-#   alb.ingress.kubernetes.io/healthcheck-path: /
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: company-web
-  namespace: company
   annotations:
     nginx.ingress.kubernetes.io/use-regex: "true"
     nginx.ingress.kubernetes.io/rewrite-target: /$2
+
 spec:
   ingressClassName: nginx
   rules:
@@ -52,6 +18,7 @@ spec:
                 name: employee-web
                 port:
                   number: 80
+
           - path: /user(/|$)(.*)
             pathType: ImplementationSpecific
             backend:
