@@ -1,6 +1,19 @@
-# Probe the subpath the Ingress actually serves, not just `/`. The image copies
-# the site to both locations, so `/` would stay green even if the subpath copy
-# were missing — which is the copy users hit.
+# Everything that makes this site "the employee site" rather than the user one.
+#
+# It lives here, not in an overlay, because it is a property of the workload —
+# true in every environment. Overlays carry only what differs between
+# environments: image tag and replica count.
+#
+# The base path appears twice on purpose, and the two must agree:
+#   NUXT_APP_BASE_URL   tells the app where it is mounted, so it serves under
+#                       that prefix AND emits asset URLs with it
+#                       (/employee/_nuxt/...). Without it the app serves at /
+#                       and every asset 404s through the Ingress.
+#   probe paths         under a base path, / is a 404 — a probe on / would fail
+#                       readiness forever.
+#
+# Both must also match the Ingress path for this site. The Ingress does not
+# rewrite, so the prefix arrives at the app intact.
 #
 # Targets the pre-namePrefix name (`web`): patches apply while the resource
 # still carries the template's name, before namePrefix runs.
@@ -13,9 +26,12 @@ spec:
     spec:
       containers:
         - name: nginx
+          env:
+            - name: NUXT_APP_BASE_URL
+              value: /employee/
           readinessProbe:
             httpGet:
-              path: /employee/index.html
+              path: /employee/
           livenessProbe:
             httpGet:
-              path: /employee/index.html
+              path: /employee/

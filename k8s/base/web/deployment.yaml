@@ -49,9 +49,13 @@ spec:
           # (`web` -> <ecr-registry>/<site>-web) and the overlay pins the tag, so an
           # overlay is the only thing that renders a deployable image ref.
           image: web
+          # The app is a Node server (Nitro), which listens on 3000. The port's
+          # *name* is the contract: the Service targets `http`, not a number,
+          # and both probes reference it — so this number can change without
+          # touching anything else.
           ports:
             - name: http
-              containerPort: 80
+              containerPort: 3000
           resources:
             requests:
               cpu: 10m

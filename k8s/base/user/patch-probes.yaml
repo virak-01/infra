@@ -1,4 +1,5 @@
-# See ../employee/patch-probes.yaml for the reasoning.
+# See ../employee/patch-probes.yaml for the reasoning. The base path must match
+# this site's Ingress path, and appear identically in both places below.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -8,9 +9,12 @@ spec:
     spec:
       containers:
         - name: nginx
+          env:
+            - name: NUXT_APP_BASE_URL
+              value: /user/
           readinessProbe:
             httpGet:
-              path: /user/index.html
+              path: /user/
           livenessProbe:
             httpGet:
-              path: /user/index.html
+              path: /user/

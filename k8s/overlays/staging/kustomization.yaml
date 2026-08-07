@@ -22,10 +22,10 @@ resources:
 images:
   - name: employee-web
     newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/website
-    newTag: staging-a2b2ee74
+    newTag: staging-9ed42421
   - name: user-web
     newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/website
-    newTag: staging-a2b2ee74
+    newTag: staging-9ed42421
 
 # One replica is enough to serve staging traffic. Declared here rather than
 # patched into the base, so the two overlays can be read side by side and the
@@ -35,41 +35,3 @@ replicas:
     count: 1
   - name: user-web
     count: 1
-
-# TEMPORARY, and paired with the shared `website` image above. The base targets
-# the nginx site images: port 80, serving files under /employee and /user. The
-# website image is a Node server on 3000 that serves at /, so both the port and
-# the probe paths have to move or the pods never pass readiness — "connection
-# refused" on :80, not a 404. Drop this block when the per-site images come back.
-#
-# JSON6902 rather than a strategic merge: the merge key for `ports` is
-# containerPort, so a merge patch would ADD port 3000 alongside 80 instead of
-# replacing it. The port's *name* stays `http`, which is what the Service and
-# both probes reference, so nothing else needs touching.
-patches:
-  - target:
-      kind: Deployment
-      name: employee-web
-    patch: |
-      - op: replace
-        path: /spec/template/spec/containers/0/ports/0/containerPort
-        value: 3000
-      - op: replace
-        path: /spec/template/spec/containers/0/readinessProbe/httpGet/path
-        value: /
-      - op: replace
-        path: /spec/template/spec/containers/0/livenessProbe/httpGet/path
-        value: /
-  - target:
-      kind: Deployment
-      name: user-web
-    patch: |
-      - op: replace
-        path: /spec/template/spec/containers/0/ports/0/containerPort
-        value: 3000
-      - op: replace
-        path: /spec/template/spec/containers/0/readinessProbe/httpGet/path
-        value: /
-      - op: replace
-        path: /spec/template/spec/containers/0/livenessProbe/httpGet/path
-        value: /

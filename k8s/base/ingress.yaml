@@ -1,26 +1,51 @@
+# Single Ingress fronting both sites:
+#   http://<address>/employee  -> employee-web
+#   http://<address>/user      -> user-web
+#
+# Targets the community ingress-nginx controller, which must be installed in
+# the cluster — see docs/deployment.md.
+#
+# NO REWRITE, deliberately. Each backend serves its own subpath already, so the
+# prefix has to reach it intact. Stripping it breaks the page rather than the
+# route: the app emits absolute asset URLs under its base path, such as
+# /employee/_nuxt/entry.css, and a backend that never saw the prefix 404s every
+# one of them. The HTML renders, the styling does not — which reads as a broken
+# app instead of a routing mistake.
+#
+# For the website image the base path comes from NUXT_APP_BASE_URL, set per
+# Deployment in the overlays. That keeps one image serving both subpaths;
+# `baseURL` in nuxt.config.ts would bake one path in at build time and force
+# two separate images.
+#
+# The backend port is the Service port (80), not the container port. The
+# Service maps 80 -> targetPort `http`, which the pod publishes on 3000, so
+# this stays 80 regardless of what the image listens on.
+#
+# To move back to the AWS Load Balancer Controller on EKS, set ingressClassName
+# to "alb" and add its annotations:
+#   alb.ingress.kubernetes.io/scheme: internet-facing
+#   alb.ingress.kubernetes.io/target-type: ip
+#   alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+#   alb.ingress.kubernetes.io/healthcheck-path: /employee
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: company-web
-  annotations:
-    nginx.ingress.kubernetes.io/use-regex: "true"
-    nginx.ingress.kubernetes.io/rewrite-target: /$2
-
+  namespace: company
 spec:
   ingressClassName: nginx
   rules:
     - http:
         paths:
-          - path: /employee(/|$)(.*)
-            pathType: ImplementationSpecific
+          - path: /employee
+            pathType: Prefix
             backend:
               service:
                 name: employee-web
                 port:
                   number: 80
-
-          - path: /user(/|$)(.*)
-            pathType: ImplementationSpecific
+          - path: /user
+            pathType: Prefix
             backend:
               service:
                 name: user-web
