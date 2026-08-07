@@ -20,10 +20,10 @@ resources:
 images:
   - name: employee-web
     newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/website
-    newTag: staging-a2b2ee74
+    newTag: staging-332218de
   - name: user-web
     newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/website
-    newTag: staging-a2b2ee74
+    newTag: staging-332218de
 
 # Stated explicitly even though it matches the base default, so that reading
 # this file beside ../staging/kustomization.yaml shows the whole difference
