@@ -15,7 +15,7 @@ AWS_REGION   ?= us-east-1
 ECR_REGISTRY ?= 043309361013.dkr.ecr.$(AWS_REGION).amazonaws.com
 
 .DEFAULT_GOAL := help
-.PHONY: help envs render validate diff deploy rollout ecr-secret
+.PHONY: help envs current render validate diff deploy rollout ecr-secret
 
 help: ## Show this help
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -32,6 +32,28 @@ envs: ## Show what each environment is pinned to
 	    | grep -E '^      - image:|^  replicas:' \
 	    | sed 's/^ *- image: /  image    /; s/^  replicas: /  replicas /'; \
 	done
+
+current: ## Show what the live cluster is running, and which overlay it matches
+	@# ENV selects what you would apply, not what is deployed. Both overlays use
+	@# the same namespace and resource names, so the only way to tell them apart
+	@# is to compare the live objects against each overlay in turn.
+	@echo "context:   $$(kubectl config current-context)"
+	@echo "namespace: $(NS)"
+	@echo
+	@kubectl -n $(NS) get deploy -o \
+	  jsonpath='{range .items[*]}  {.metadata.name}{"  x"}{.spec.replicas}{"  "}{.spec.template.spec.containers[0].image}{"\n"}{end}' \
+	  2>/dev/null || echo "  (no deployments — nothing applied yet)"
+	@echo
+	@# kubectl diff exits 0 only when the live state already equals the overlay.
+	@# Exit 1 means differences; anything higher is a real error, so it is not
+	@# treated as a mismatch.
+	@matched=""; \
+	for o in k8s/overlays/*/; do \
+	  env=$$(basename $$o); \
+	  kubectl diff -k $$o >/dev/null 2>&1; \
+	  if [ $$? -eq 0 ]; then echo "  => live cluster matches: $$env"; matched=1; fi; \
+	done; \
+	[ -n "$$matched" ] || echo "  => matches no overlay exactly (mid-rollout, drifted, or a tag was edited)"
 
 render: ## Print the manifests this repo would apply
 	kubectl kustomize $(OVERLAY)

@@ -19,11 +19,11 @@ resources:
 # entry and the image renders untagged, i.e. :latest.
 images:
   - name: employee-web
-    newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/employee-web
-    newTag: 1.0.0
+    newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/website
+    newTag: staging-a2b2ee74
   - name: user-web
-    newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/user-web
-    newTag: 1.0.0
+    newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/website
+    newTag: staging-a2b2ee74
 
 # Stated explicitly even though it matches the base default, so that reading
 # this file beside ../staging/kustomization.yaml shows the whole difference
