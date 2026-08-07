@@ -15,7 +15,7 @@ AWS_REGION   ?= us-east-1
 ECR_REGISTRY ?= 043309361013.dkr.ecr.$(AWS_REGION).amazonaws.com
 
 .DEFAULT_GOAL := help
-.PHONY: help envs current render validate diff deploy rollout ecr-secret
+.PHONY: help envs current render validate diff deploy rollout aws-creds ecr-secret
 
 help: ## Show this help
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -74,16 +74,31 @@ deploy: ## Apply the overlay
 	kubectl apply -k $(OVERLAY)
 	kubectl -n $(NS) get pods,svc,ingress
 
-ecr-secret: ## Create/refresh the ECR pull Secret now (needed once, before the first deploy)
-	@# The CronJob in k8s/base/ecr-credentials.yaml keeps this fresh every 8h,
-	@# but cannot bootstrap it: pods pull before the first schedule fires.
-	@# create --dry-run | apply so re-running is idempotent.
+aws-creds: ## Store the IAM key the refresh job uses: make aws-creds AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...
+	@# Every line is @-prefixed: make echoes recipes by default, which would
+	@# print the secret key into the terminal and any CI log.
+	@test -n "$(AWS_ACCESS_KEY_ID)"     || { echo "ERROR: set AWS_ACCESS_KEY_ID=..."; exit 1; }
+	@test -n "$(AWS_SECRET_ACCESS_KEY)" || { echo "ERROR: set AWS_SECRET_ACCESS_KEY=..."; exit 1; }
 	@echo "context: $$(kubectl config current-context)"
-	kubectl -n $(NS) create secret docker-registry ecr-creds \
-	  --docker-server=$(ECR_REGISTRY) \
-	  --docker-username=AWS \
-	  --docker-password="$$(aws ecr get-login-password --region $(AWS_REGION))" \
+	@kubectl -n $(NS) create secret generic aws-ecr-credentials \
+	  --from-literal=AWS_ACCESS_KEY_ID='$(AWS_ACCESS_KEY_ID)' \
+	  --from-literal=AWS_SECRET_ACCESS_KEY='$(AWS_SECRET_ACCESS_KEY)' \
+	  $(if $(AWS_SESSION_TOKEN),--from-literal=AWS_SESSION_TOKEN='$(AWS_SESSION_TOKEN)',) \
 	  --dry-run=client -o yaml | kubectl apply -f -
+	@echo "stored. now run: make ecr-secret"
+
+ecr-secret: ## Mint the ECR pull Secret now, by running the refresh CronJob immediately
+	@# Runs the very job the 8-hourly schedule runs, so this needs no local AWS
+	@# CLI: the credentials, the egress exception and the RBAC all live in the
+	@# cluster. The CronJob cannot bootstrap itself — pods pull long before the
+	@# first schedule fires — which is what this target is for.
+	@echo "context: $$(kubectl config current-context)"
+	kubectl -n $(NS) delete job ecr-credentials-refresh-now --ignore-not-found
+	kubectl -n $(NS) create job ecr-credentials-refresh-now --from=cronjob/ecr-credentials-refresh
+	@kubectl -n $(NS) wait --for=condition=complete --timeout=120s job/ecr-credentials-refresh-now \
+	  || { echo; echo "job did not complete — logs:"; \
+	       kubectl -n $(NS) logs job/ecr-credentials-refresh-now --all-containers --tail=30; exit 1; }
+	@kubectl -n $(NS) get secret ecr-creds
 
 rollout: ## Wait for both Deployments to finish rolling out
 	@for site in $(SITES); do \
