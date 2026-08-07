@@ -91,3 +91,11 @@ fails any overlay that renders an untagged image, since that resolves to
 
 `kubectl` (1.27+, for the built-in kustomize), `docker`, and a cluster with an
 ingress controller. `kubeconform` is optional and only needed for `make validate`.
+
+
+
+kubectl -n company get secret ecr-creds
+kubectl -n company rollout restart deploy/employee-web deploy/user-web
+make rollout
+kubectl -n company get pods
+
