@@ -53,15 +53,20 @@ spec:
             matchLabels:
               app: web
 
-      # The image runs as its own non-root user; this asserts it rather than
-      # trusting it, and satisfies most of the `restricted` Pod Security
-      # Standard. runAsUser is deliberately not pinned — the image chooses its
-      # own UID, and hardcoding one here would break on a rebuild.
+      # runAsUser must be numeric and must be stated here. `runAsNonRoot: true`
+      # alone fails when the image declares `USER nuxt`: the kubelet cannot
+      # resolve a name to a UID without running the image, so it refuses to
+      # start — "image has non-numeric user (nuxt), cannot verify user is
+      # non-root". 1001 matches the UID pinned in the frontend Dockerfile; the
+      # two must be changed together.
       #
       # readOnlyRootFilesystem is NOT set: Nitro writes to a temp dir at
       # runtime. Adding it needs an emptyDir at /tmp and a test, not a guess.
       securityContext:
         runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
         seccompProfile:
           type: RuntimeDefault
 
