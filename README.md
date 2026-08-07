@@ -10,9 +10,9 @@ elsewhere and publishes to a registry; here you name a tag and the cluster pulls
 it. Nothing in this repo needs Docker.
 
 ```
-registry (Docker Hub)
-  ranvirak/employee-web:<tag>   ->  /employee
-  ranvirak/user-web:<tag>       ->  /user
+registry (private ECR, us-east-1)
+  043309361013.dkr.ecr.us-east-1.amazonaws.com/employee-web:<tag>  ->  /employee
+  043309361013.dkr.ecr.us-east-1.amazonaws.com/user-web:<tag>      ->  /user
 
 k8s/
   base/

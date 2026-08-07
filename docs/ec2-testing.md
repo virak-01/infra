@@ -220,7 +220,7 @@ with it. Stopping is not enough — a stopped instance still bills for storage.
 | Symptom | Cause |
 |---|---|
 | Pods `Pending` forever | Using `ENV=staging` on one node. See step 5. |
-| `ImagePullBackOff` | Check the tag exists: `curl -s https://hub.docker.com/v2/repositories/ranvirak/employee-web/tags/` |
+| `ImagePullBackOff` | Private ECR on k3s: usually the `ecr-creds` Secret is missing or its 12-hour token expired — recreate it (see docs/deployment.md). Otherwise check the tag exists: `aws ecr describe-images --region us-east-1 --repository-name employee-web --query 'imageDetails[].imageTags'` |
 | Ingress has no `ADDRESS` | Expected with the baremetal controller — use the NodePort. |
 | curl from laptop hangs | Security group source IP, or wrong NodePort. |
 | `Unable to connect to the server` | kubeconfig not copied — step 3. |

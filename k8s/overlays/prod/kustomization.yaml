@@ -13,10 +13,16 @@ resources:
 #
 # Avoid reusing a tag: nodes may keep the old cached layer, so the same tag can
 # mean two different images across the fleet.
+# `name` matches what the base rendered (`employee-web`, not the original
+# `web`); newName prepends this environment's registry and newTag pins the
+# release. A `name` that matches nothing is not an error — kustomize skips the
+# entry and the image renders untagged, i.e. :latest.
 images:
-  - name: ranvirak/employee-web
+  - name: employee-web
+    newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/employee-web
     newTag: 1.0.0
-  - name: ranvirak/user-web
+  - name: user-web
+    newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/user-web
     newTag: 1.0.0
 
 # Stated explicitly even though it matches the base default, so that reading

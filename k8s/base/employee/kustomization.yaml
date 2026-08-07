@@ -23,10 +23,12 @@ labels:
       app: employee-web
     includeSelectors: true
 
-# Name only — the tag belongs to the overlay.
+# Bare repository name, deliberately. The registry belongs to the overlay, so
+# the base stays portable and each environment can pull from its own account.
+# The overlay also pins the tag; nothing here is deployable on its own.
 images:
   - name: web
-    newName: ranvirak/employee-web
+    newName: employee-web
 
 patches:
   - path: patch-probes.yaml

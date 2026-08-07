@@ -25,6 +25,13 @@ spec:
       # container compromise yields no cluster credential.
       automountServiceAccountToken: false
 
+      # Private ECR. On EKS this line is unnecessary — the kubelet's credential
+      # provider handles it from the node role — but harmless: a missing Secret
+      # only logs an event, and the node credentials still satisfy the pull.
+      # See ../ecr-credentials.yaml for how this Secret stays valid.
+      imagePullSecrets:
+        - name: ecr-creds
+
       # Worker nodes only. No toleration for the control-plane taint is
       # declared either, so these pods can never land on a master.
       affinity:
@@ -39,7 +46,7 @@ spec:
       containers:
         - name: nginx
           # Untagged on purpose. Each site's kustomization rewrites the name
-          # (`web` -> ranvirak/<site>-web) and the overlay pins the tag, so an
+          # (`web` -> <ecr-registry>/<site>-web) and the overlay pins the tag, so an
           # overlay is the only thing that renders a deployable image ref.
           image: web
           ports:

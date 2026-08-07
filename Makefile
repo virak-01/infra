@@ -11,8 +11,11 @@ SITES    := employee user
 OVERLAY  := k8s/overlays/$(ENV)
 NS       := company
 
+AWS_REGION   ?= us-east-1
+ECR_REGISTRY ?= 043309361013.dkr.ecr.$(AWS_REGION).amazonaws.com
+
 .DEFAULT_GOAL := help
-.PHONY: help envs render validate diff deploy rollout
+.PHONY: help envs render validate diff deploy rollout ecr-secret
 
 help: ## Show this help
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -48,6 +51,17 @@ deploy: ## Apply the overlay
 	@echo "context: $$(kubectl config current-context)"
 	kubectl apply -k $(OVERLAY)
 	kubectl -n $(NS) get pods,svc,ingress
+
+ecr-secret: ## Create/refresh the ECR pull Secret now (needed once, before the first deploy)
+	@# The CronJob in k8s/base/ecr-credentials.yaml keeps this fresh every 8h,
+	@# but cannot bootstrap it: pods pull before the first schedule fires.
+	@# create --dry-run | apply so re-running is idempotent.
+	@echo "context: $$(kubectl config current-context)"
+	kubectl -n $(NS) create secret docker-registry ecr-creds \
+	  --docker-server=$(ECR_REGISTRY) \
+	  --docker-username=AWS \
+	  --docker-password="$$(aws ecr get-login-password --region $(AWS_REGION))" \
+	  --dry-run=client -o yaml | kubectl apply -f -
 
 rollout: ## Wait for both Deployments to finish rolling out
 	@for site in $(SITES); do \

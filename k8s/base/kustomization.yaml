@@ -17,6 +17,8 @@ resources:
   - ingress.yaml
   - networkpolicy-egress.yaml
   - networkpolicy-ingress.yaml
+  # Drop this line on EKS — the node role supplies pull credentials there.
+  - ecr-credentials.yaml
 
 # Provenance labels only. includeSelectors is false — and must stay false:
 # these keys would otherwise land in the Deployments' immutable selectors and

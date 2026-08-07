@@ -16,50 +16,54 @@ The registry is the handoff. Deploying a new version is a one-line edit to an
 overlay's `newTag:` — never a rebuild. Nothing here requires Docker, which is
 why a cluster node running containerd can deploy this repo perfectly well.
 
-Currently published (public, no pull secret needed):
+Published to private ECR in `us-east-1`, account `043309361013` — so the cluster
+must be able to authenticate before any pod starts (see below):
 
 | Image | Serves |
 |---|---|
-| `ranvirak/employee-web` | `/employee` |
-| `ranvirak/user-web` | `/user` |
+| `043309361013.dkr.ecr.us-east-1.amazonaws.com/employee-web` | `/employee` |
+| `043309361013.dkr.ecr.us-east-1.amazonaws.com/user-web` | `/user` |
 
 Check what tags exist before pinning one:
 
 ```sh
-curl -s https://hub.docker.com/v2/repositories/ranvirak/employee-web/tags/ \
-  | tr ',' '\n' | grep '"name"'
+aws ecr describe-images --region us-east-1 \
+  --repository-name employee-web \
+  --query 'reverse(sort_by(imageDetails,&imagePushedAt))[].imageTags' --output text
 ```
 
 Each image serves its files under a matching subpath
 (`/usr/share/nginx/html/employee/`), which is why the Ingress needs no rewrite
 rules and relative links to `style.css` resolve.
 
-### Pulling from a private registry instead
+### ECR pull credentials
 
-Point the overlays at the new names — no Deployment manifest changes, which is
-the point of the overlay. For ECR:
+The image name lives in `k8s/base/<site>/kustomization.yaml` and the tag in the
+overlay. Both already point at ECR; the part that is **not** in this repo is how
+a node proves it may pull. Pick one, by cluster:
 
-```yaml
-# k8s/overlays/prod/kustomization.yaml
-images:
-  - name: ranvirak/employee-web
-    newName: 123456789012.dkr.ecr.ap-southeast-1.amazonaws.com/employee-web
-    newTag: 1.0.0
-```
+**EKS — grant the node role, add nothing to the manifests.** Attach
+`AmazonEC2ContainerRegistryReadOnly` to the node group's IAM role. The kubelet's
+built-in ECR credential provider mints a token per pull, so nothing expires and
+no Secret exists to go stale. This is why the pod spec has no `imagePullSecrets`.
 
-A private registry also needs pull credentials in the namespace:
+**k3s or any non-AWS cluster — a docker-registry Secret.** No ECR credential
+provider exists there, so the credentials must be stored:
 
 ```sh
 kubectl -n company create secret docker-registry ecr-creds \
-  --docker-server=123456789012.dkr.ecr.ap-southeast-1.amazonaws.com \
+  --docker-server=043309361013.dkr.ecr.us-east-1.amazonaws.com \
   --docker-username=AWS \
-  --docker-password="$(aws ecr get-login-password --region ap-southeast-1)"
+  --docker-password="$(aws ecr get-login-password --region us-east-1)"
 ```
 
-then reference it from the pod spec via `imagePullSecrets`. On EKS the better
-answer is to skip the secret entirely and grant the **node role** ECR pull
-permission (`AmazonEC2ContainerRegistryReadOnly`), since ECR tokens expire every
-12 hours and a stored secret goes stale.
+then reference it from the pod spec via `imagePullSecrets: [{name: ecr-creds}]`.
+
+> **The token expires in 12 hours.** That command works now and fails tomorrow
+> with `ImagePullBackOff` / `401 Unauthorized` — and only for pods that happen to
+> restart, so it looks intermittent. On k3s the Secret has to be recreated on a
+> schedule (a CronJob running the command above). This is the reason the EKS
+> node-role route is preferred wherever it is available.
 
 ## Deploy
 

@@ -12,12 +12,20 @@ resources:
   - ../../base
 
 # Staging normally runs ahead of prod: bump the tag here, verify, then set the
-# same tag in ../prod. Both sit at 1.0.0 today because nothing newer is built.
+# same tag in ../prod.
+#
+# TEMPORARY: both sites deliberately point at the same `website` image while the
+# deployment path is being tested end to end. The per-site employee-web and
+# user-web repositories do not exist in ECR yet. Two entries rather than one
+# because the base still renders two distinct names — that is what lets them be
+# split apart again later without touching anything else.
 images:
-  - name: ranvirak/employee-web
-    newTag: 1.0.0
-  - name: ranvirak/user-web
-    newTag: 1.0.0
+  - name: employee-web
+    newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/website
+    newTag: staging-a2b2ee74
+  - name: user-web
+    newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/website
+    newTag: staging-a2b2ee74
 
 # One replica is enough to serve staging traffic. Declared here rather than
 # patched into the base, so the two overlays can be read side by side and the

@@ -15,7 +15,7 @@ labels:
 
 images:
   - name: web
-    newName: ranvirak/user-web
+    newName: user-web
 
 patches:
   - path: patch-probes.yaml
