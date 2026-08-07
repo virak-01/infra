@@ -29,8 +29,8 @@ envs: ## Show what each environment is pinned to
 	@for o in k8s/overlays/*/; do \
 	  printf "\033[36m%s\033[0m\n" "$$(basename $$o)"; \
 	  kubectl kustomize $$o \
-	    | grep -E '^      - image:|^  replicas:' \
-	    | sed 's/^ *- image: /  image    /; s/^  replicas: /  replicas /'; \
+	    | grep -oE '^[[:space:]]*-?[[:space:]]*image:[[:space:]]*[^[:space:]]+|^  replicas: .*' \
+	    | sed 's/^ *-* *image: */  image    /; s/^  replicas: /  replicas /'; \
 	done
 
 current: ## Show what the live cluster is running, and which overlay it matches

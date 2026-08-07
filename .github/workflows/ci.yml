@@ -67,7 +67,13 @@ jobs:
         # rollbacks meaningless. Only the base is allowed to be untagged.
         run: |
           for overlay in k8s/overlays/*/; do
-            images=$(kubectl kustomize "$overlay" | awk '/^ +- image:/ {print $3}')
+            # Match `image:` wherever it appears in the container map. Keying on
+            # `- image:` breaks the moment a field sorting before `image` is added
+            # (envFrom, lifecycle) — the gate then silently matches nothing.
+            images=$(kubectl kustomize "$overlay" \
+              | grep -oE '^[[:space:]]*-?[[:space:]]*image:[[:space:]]*[^[:space:]]+' \
+              | awk '{print $NF}')
+            [ -n "$images" ] || { echo "::error::$overlay rendered no images — the check is broken"; exit 1; }
             untagged=$(echo "$images" | grep -v ':' || true)
             if [ -n "$untagged" ]; then
               echo "::error::$overlay renders untagged image(s): $untagged"

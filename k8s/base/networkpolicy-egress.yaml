@@ -20,3 +20,66 @@ spec:
   policyTypes:
     - Egress
   # No `egress:` rules at all means "permit nothing".
+---
+# Narrow egress allowance for the two web pods.
+#
+# deny-all-egress above selects every pod and permits nothing, which is correct
+# for a static nginx site but fatal for a server-rendered app: the Nuxt server
+# resolves DNS and calls the backend during SSR, so with no egress every
+# /api/* render fails and the page renders empty. NetworkPolicies are additive,
+# so this grants back the minimum and leaves everything else denied.
+#
+# 169.254.169.254 stays blocked. That exclusion is the whole point of the deny
+# rule — it stops a compromised container reading the node's IAM role — and
+# nothing here should ever need the metadata service.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-allow-egress
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [employee-web, user-web]
+  policyTypes:
+    - Egress
+  egress:
+    # DNS. Without this nothing else works: the pod cannot resolve a Service
+    # name, and failures look like connection timeouts rather than NXDOMAIN.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # In-cluster backends (NUXT_BACKEND_URL / NUXT_AUTH_URL). Deliberately
+    # scoped by port rather than left open. Tighten `to` to the backend's real
+    # namespace and pod labels once those Services exist — this currently
+    # allows any pod in the cluster on these ports.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 3001
+        - protocol: TCP
+          port: 3002
+
+    # Outbound HTTPS, minus the metadata service. Needed if the backend is an
+    # external API. Drop this rule entirely if everything it talks to is
+    # in-cluster — it is the broadest thing here.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.169.254/32
+      ports:
+        - protocol: TCP
+          port: 443

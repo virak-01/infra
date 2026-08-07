@@ -1,0 +1,20 @@
+# Keeps at least one pod serving during voluntary disruption — node drains,
+# cluster upgrades, `kubectl drain`. Without it, draining a node can evict every
+# pod of a site simultaneously and the site goes dark mid-maintenance.
+#
+# minAvailable: 1 rather than a percentage, and rather than maxUnavailable: 0:
+# a PDB that can never be satisfied blocks a drain forever, which turns a
+# routine node upgrade into an outage of its own.
+#
+# Named `web` and selecting `app: web` like the Deployment: the per-site
+# kustomization applies namePrefix and rewrites the selector, so this one file
+# produces employee-web and user-web budgets.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: web
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: web

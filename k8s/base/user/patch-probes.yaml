@@ -12,6 +12,9 @@ spec:
           env:
             - name: NUXT_APP_BASE_URL
               value: /user/
+          startupProbe:
+            httpGet:
+              path: /user/
           readinessProbe:
             httpGet:
               path: /user/

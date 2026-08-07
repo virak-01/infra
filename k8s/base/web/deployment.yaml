@@ -11,7 +11,24 @@ metadata:
   labels:
     app: web
 spec:
+  # A floor, not the operating value: the HorizontalPodAutoscaler owns the
+  # replica count once metrics-server is available. Kept here so that a cluster
+  # without metrics-server still runs two pods rather than defaulting to one.
+  #
+  # Consequence worth knowing: every `kubectl apply` resets the count to 2, so a
+  # deploy while scaled out causes a brief dip before the HPA recovers. Argo CD
+  # users should add `ignoreDifferences` on /spec/replicas to avoid permanent
+  # OutOfSync noise.
   replicas: 2
+
+  # Zero-downtime rollout: never drop below the desired count, add one pod at a
+  # time. The default (25% unavailable) can take half the fleet out at once.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+
   selector:
     matchLabels:
       app: web
@@ -20,6 +37,34 @@ spec:
       labels:
         app: web
     spec:
+      # Give in-flight SSR renders time to finish. The preStop sleep below eats
+      # into this, so it must comfortably exceed it.
+      terminationGracePeriodSeconds: 30
+
+      # Both pods of a site must not share a node, or a single node failure
+      # takes the whole site down. ScheduleAnyway rather than DoNotSchedule:
+      # on a one-node cluster the pod still schedules instead of hanging
+      # Pending, which matters while this runs on kubeadm.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: web
+
+      # The image runs as its own non-root user; this asserts it rather than
+      # trusting it, and satisfies most of the `restricted` Pod Security
+      # Standard. runAsUser is deliberately not pinned — the image chooses its
+      # own UID, and hardcoding one here would break on a rebuild.
+      #
+      # readOnlyRootFilesystem is NOT set: Nitro writes to a temp dir at
+      # runtime. Adding it needs an emptyDir at /tmp and a test, not a guess.
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
       # This pod serves static files and never calls the Kubernetes API, so it
       # has no use for a service account token. Not mounting one means a
       # container compromise yields no cluster credential.
@@ -68,13 +113,47 @@ spec:
           envFrom:
             - configMapRef:
                 name: website-config
+          # Sized for a Node SSR process, not for nginx serving static files.
+          # The previous 64Mi limit was below Node's own baseline heap (~50-80Mi
+          # before rendering anything), so pods OOMKilled under any real load.
+          #
+          # The CPU request is what the HPA divides by, so it sets the scaling
+          # point as well as the scheduling one — lowering it makes the HPA
+          # scale out later, not sooner.
           resources:
             requests:
-              cpu: 10m
-              memory: 32Mi
+              cpu: 200m
+              memory: 256Mi
             limits:
-              cpu: 100m
-              memory: 64Mi
+              # No CPU limit on purpose: SSR is bursty, and a limit throttles
+              # p99 latency for no isolation benefit once requests are set.
+              memory: 512Mi
+
+          # Cold start can take tens of seconds under load. Without a
+          # startupProbe the liveness probe applies from the beginning and
+          # restarts the pod mid-boot — a crash loop that looks like a broken
+          # image. This gives up to 60s (30 x 2s) before liveness takes over.
+          # Path is per-site; ../<site>/patch-probes.yaml overrides it.
+          startupProbe:
+            httpGet:
+              path: /index.html
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+
+          # Remove the pod from Service endpoints before the process starts
+          # shutting down. Endpoint propagation is asynchronous, so without this
+          # the ingress keeps sending requests to a terminating pod for a second
+          # or two — the usual cause of 502s during an otherwise clean deploy.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           # Probe paths are per-site: each site patches these to the subpath the
           # Ingress actually serves, so a probe failure means the served URL is
           # broken, not merely that nginx is up.
