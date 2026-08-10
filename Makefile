@@ -15,6 +15,22 @@ OVERLAY  := k8s/overlays/$(ENV)
 # namespace identical and this one line covers every target below.
 NS       := $(ENV)
 
+# Optional Ingress host, applied after the manifests and never committed:
+#
+#   make deploy ENV=uat HOST=uat.api.<node-ip>.nip.io
+#
+# The overlays hold a placeholder host precisely so that a node's public IP —
+# which is public, and which changes on every restart without an Elastic IP —
+# stays out of git. Set this on the command line instead.
+#
+# Applied out of band for the same reason `app-config` and `ecr-secret` are:
+# it describes one machine, not the repo. Consequences worth knowing — `make
+# render` and `make diff` show the placeholder, not this value, and Argo CD
+# will revert it on its next sync, since git is what it makes the cluster
+# match. Fine while sync is manual; use a real domain in the overlay once it
+# is not.
+HOST     ?=
+
 AWS_REGION   ?= us-east-1
 ECR_REGISTRY ?= 043309361013.dkr.ecr.$(AWS_REGION).amazonaws.com
 
@@ -73,9 +89,20 @@ diff: ## Show what applying would change in the live cluster
 	@# not an error. Anything above 1 is a real failure and still propagates.
 	@kubectl diff -k $(OVERLAY) || test $$? -eq 1
 
-deploy: ## Apply the overlay
+deploy: ## Apply the overlay (HOST=<fqdn> overrides the Ingress host)
 	@echo "context: $$(kubectl config current-context)"
 	kubectl apply -k $(OVERLAY)
+	@# A shell `if`, not make's $(if): the JSON below is full of commas, and
+	@# make would read them as its own argument separators and silently
+	@# truncate the command at the first one.
+	@#
+	@# JSON Patch `add` on a path that already exists replaces it, so this works
+	@# whether the overlay set a host (uat) or left the rule hostless (prod).
+	@if [ -n "$(HOST)" ]; then \
+	  echo "→ overriding Ingress host: $(HOST)"; \
+	  kubectl -n $(NS) patch ingress company-web --type=json \
+	    -p '[{"op":"add","path":"/spec/rules/0/host","value":"$(HOST)"}]'; \
+	fi
 	kubectl -n $(NS) get pods,svc,ingress
 
 app-config: ## Load k8s/overlays/$(ENV)/app-config.env into the cluster as a ConfigMap

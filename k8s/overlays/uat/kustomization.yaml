@@ -62,12 +62,14 @@ patches:
         path: /spec/maxReplicas
         value: 3
 
-  # The one field that MUST differ from prod. Sharing a cluster means both
-  # Ingresses reach the same controller, and a namespace is not a routing
-  # boundary: two hostless claims on `/employee` in the same ingress class
-  # collide, and ingress-nginx awards the path to whichever object was created
-  # first. No error is raised — UAT would just start answering prod's traffic.
-  # A distinct host per environment is what keeps them apart.
+  # The one field that MUST differ from prod, and the only host claimed in the
+  # whole cluster. ../prod stays hostless and is therefore the catch-all, so
+  # this line is the entire boundary between the two environments: this exact
+  # hostname reaches UAT, everything else reaches prod.
+  #
+  # Placeholder host — set it to a domain you control before this means
+  # anything. No node IP belongs in this file: it is public, it is in git, and
+  # it changes every time the instance restarts without an Elastic IP.
   - target:
       kind: Ingress
     patch: |

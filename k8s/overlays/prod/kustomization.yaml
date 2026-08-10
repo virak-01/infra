@@ -44,16 +44,19 @@ replicas:
   - name: user-web
     count: 2
 
-# ONE `patches:` key per file. A second one does not merge and does not error —
-# kustomize takes the last and silently discards the first.
-patches:
-  # The one field that MUST differ from UAT. Sharing a cluster means both
-  # Ingresses reach the same controller, and a namespace is not a routing
-  # boundary: two hostless claims on `/employee` in the same ingress class
-  # collide, and the path goes to whichever object was created first, silently.
-  - target:
-      kind: Ingress
-    patch: |
-      - op: add
-        path: /spec/rules/0/host
-        value: api.example.com
+# No Ingress patch here on purpose: prod keeps the base's hostless rule and is
+# therefore the CATCH-ALL for this ingress class. Any request whose Host header
+# matches no other Ingress lands here, which is what makes all of these work
+# without a single DNS record:
+#
+#   http://<node-ip>:<nodeport>/employee        bare IP
+#   http://api.<node-ip>.nip.io:<nodeport>/employee
+#   http://anything-else:<nodeport>/employee
+#
+# ../uat is the only overlay that claims a host, so it is the only traffic
+# carved out of this. Exactly one hostless Ingress per class is safe; two would
+# collide, with the path going to whichever object was created first, silently.
+#
+# The cost of being the catch-all: a typo'd or unknown hostname reaches PROD
+# rather than erroring. Give prod its own explicit host once real DNS exists,
+# and let something harmless be the default instead.

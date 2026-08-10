@@ -64,6 +64,45 @@ variable you normally set.
 > environments, so a wrong `ENV` deploys to the wrong namespace rather than
 > failing — `make current ENV=<env>` shows what is actually running there.
 
+## Reaching it
+
+`prod` keeps a **hostless** Ingress rule and is therefore the catch-all: any
+`Host` no other Ingress claims lands there, so it is reachable by bare node IP
+with no DNS at all.
+
+```
+http://<node-ip>:<nodeport>/employee     -> prod
+http://<node-ip>:<nodeport>/user         -> prod
+```
+
+`uat` is the only environment claiming a hostname, which is what separates the
+two. Exactly one hostless Ingress per class is safe; two collide silently.
+
+The overlays carry a **placeholder** host, deliberately — a node's public IP is
+public and changes on restart, so it does not belong in git. Supply the real
+one at deploy time:
+
+```sh
+make deploy ENV=uat HOST=uat.api.<node-ip>.nip.io
+```
+
+`nip.io` is a public wildcard DNS service: any name shaped
+`<anything>.<ip>.nip.io` resolves to that IP, with nothing to register. Only
+the client resolving the name talks to it — the cluster never does. A line in
+your local `/etc/hosts` works equally well and involves no third party, but has
+to be repeated on every machine you browse from.
+
+`HOST` is applied after the manifests, for the same reason `app-config` and
+`ecr-secret` are: it describes one machine, not the repo. So `make render` and
+`make diff` show the placeholder, and Argo CD reverts it on its next sync. Put
+a real domain in the overlay once there is one.
+
+Find the port with:
+
+```sh
+kubectl -n ingress-nginx get svc ingress-nginx-controller
+```
+
 ## Shipping a change
 
 Once a new tag has been published to the registry, deploying it is a one-line
@@ -103,4 +142,9 @@ kubectl -n uat get secret ecr-creds
 kubectl -n uat rollout restart deploy/employee-web deploy/user-web
 make rollout ENV=uat
 kubectl -n uat get pods
+
+Confirm, then fix:
+kubectl -n prod get configmap                 # website-config will be absent
+make app-config ENV=prod                      # creates it + restarts the deployments
+kubectl -n prod get pods -w
 
