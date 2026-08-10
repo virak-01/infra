@@ -1,0 +1,76 @@
+# UAT. Shares a cluster with prod and is separated from it by namespace, so
+# every resource name stays identical to prod's — `ENV`, not the kubectl
+# context, is what selects the environment.
+#
+#   make deploy ENV=uat
+#
+# That sameness is the point: UAT is only worth testing against if it is shaped
+# like prod. The two differences that matter are below — the image tag and the
+# scale — plus the Ingress host, which MUST differ (see the patch).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# The environment. This is the only place it is declared: the base deliberately
+# sets no namespace, so this value both stamps every resource below and renames
+# the base's Namespace object to `uat`.
+namespace: uat
+
+# UAT normally runs ahead of prod: bump the tag here, verify, then set the
+# same tag in ../prod.
+#
+# TEMPORARY: both sites deliberately point at the same `website` image while the
+# deployment path is being tested end to end. The per-site employee-web and
+# user-web repositories do not exist in ECR yet. Two entries rather than one
+# because the base still renders two distinct names — that is what lets them be
+# split apart again later without touching anything else.
+images:
+  - name: employee-web
+    newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/website
+    newTag: staging-9ed42421
+  - name: user-web
+    newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/website
+    newTag: staging-9ed42421
+
+# One replica is enough to serve UAT traffic — and it also keeps the two
+# environments inside one node's memory budget. Declared here rather than
+# patched into the base, so the two overlays can be read side by side and the
+# difference is obvious.
+replicas:
+  - name: employee-web
+    count: 1
+  - name: user-web
+    count: 1
+
+# ONE `patches:` key for the whole file. A second one does not merge and does
+# not error — kustomize takes the last and silently discards the first, so the
+# patch you thought you added is simply gone from the render. Add new patches
+# as list items here.
+patches:
+  # UAT scales lower than prod. minReplicas must not exceed the `replicas`
+  # above, or the HPA immediately scales the Deployment up and the declared
+  # replica count becomes a lie.
+  - target:
+      kind: HorizontalPodAutoscaler
+    patch: |
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+      - op: replace
+        path: /spec/maxReplicas
+        value: 3
+
+  # The one field that MUST differ from prod. Sharing a cluster means both
+  # Ingresses reach the same controller, and a namespace is not a routing
+  # boundary: two hostless claims on `/employee` in the same ingress class
+  # collide, and ingress-nginx awards the path to whichever object was created
+  # first. No error is raised — UAT would just start answering prod's traffic.
+  # A distinct host per environment is what keeps them apart.
+  - target:
+      kind: Ingress
+    patch: |
+      - op: add
+        path: /spec/rules/0/host
+        value: uat.api.example.com

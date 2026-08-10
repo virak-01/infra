@@ -1,15 +1,16 @@
-# Argo CD Application for PRODUCTION: keeps the `company` namespace matching
-# k8s/overlays/prod in this repo. Staging is a separate cluster with its own
-# Argo CD — see application-staging.yaml.
+# Argo CD Application for PRODUCTION: keeps the `prod` namespace matching
+# k8s/overlays/prod in this repo. UAT shares this cluster in its own namespace
+# and is managed by the same Argo CD — see application-uat.yaml.
 #
-# Apply this AFTER installing Argo CD itself (see docs/argocd.md), against the
-# prod cluster's context. Note that argocd/ is not part of the synced path —
-# Argo CD does not manage its own Application here, so this file is applied
-# once by hand.
+# Apply this AFTER installing Argo CD itself (see docs/argocd.md). Note that
+# argocd/ is not part of the synced path — Argo CD does not manage its own
+# Application here, so this file is applied once by hand.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: company-web
+  # Named for the environment it syncs, matching `destination.namespace` below
+  # and `ENV` in the Makefile — see application-uat.yaml for its twin.
+  name: prod
   namespace: argocd
 spec:
   project: default
@@ -24,7 +25,10 @@ spec:
 
   destination:
     server: https://kubernetes.default.svc
-    namespace: company
+    # Matches the overlay's own `namespace: prod`. It has to: this is the
+    # namespace CreateNamespace=true would create, and the default for any
+    # resource that does not name one itself.
+    namespace: prod
 
   syncPolicy:
     syncOptions:

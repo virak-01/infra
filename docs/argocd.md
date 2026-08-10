@@ -5,30 +5,37 @@ rolling back.
 
 ## Install and register
 
-Staging and prod are separate clusters, so each runs its own Argo CD and gets
-its own Application. Run this once per cluster, with that cluster's context
-active:
+UAT and prod share one cluster, so a single Argo CD manages both — one
+Application per environment, each pointed at its own namespace. Install it
+once:
 
 ```sh
-kubectl config use-context <staging>          # then repeat for <prod>
-
 kubectl create namespace argocd
 kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
 kubectl -n argocd rollout status deploy/argocd-server
 
-kubectl apply -f argocd/application-staging.yaml    # or -prod.yaml
+kubectl apply -f argocd/application-uat.yaml
+kubectl apply -f argocd/application-prod.yaml
 ```
 
 | File | Application | Syncs |
 |---|---|---|
-| [`application-staging.yaml`](../argocd/application-staging.yaml) | `company-web-staging` | `k8s/overlays/staging` |
-| [`application-prod.yaml`](../argocd/application-prod.yaml) | `company-web` | `k8s/overlays/prod` |
+| [`application-uat.yaml`](../argocd/application-uat.yaml) | `uat` | `k8s/overlays/uat` |
+| [`application-prod.yaml`](../argocd/application-prod.yaml) | `prod` | `k8s/overlays/prod` |
+
+The Application name, the overlay directory, the namespace and `ENV` are all
+the same word per environment. That is the whole naming scheme.
 
 Both use `server: https://kubernetes.default.svc` — "the cluster I run in" — so
-neither needs cluster registration or credentials. If you would rather run one
-Argo CD managing both, register the remote cluster with
-`argocd cluster add <context>` and put its API URL in that Application's
-`destination.server`.
+neither needs cluster registration or credentials. What separates them is
+`destination.namespace`: `uat` for one, `prod` for the other, each matching the
+`namespace:` its overlay declares. Those two values must agree — it is the
+namespace `CreateNamespace=true` creates, and the default for any resource that
+does not name one itself.
+
+If you later split the environments onto separate clusters, register the remote
+one with `argocd cluster add <context>` and put its API URL in that
+Application's `destination.server`.
 
 `argocd/` is deliberately outside the synced path — Argo CD does not manage its
 own Applications here, so these files are applied once by hand. Re-apply
@@ -52,7 +59,7 @@ base renders images untagged, which is why it is not a valid sync target.
 
 A release is therefore a one-line change to an overlay's `images:` block, which
 is also the whole diff Argo CD shows and the whole thing a rollback reverts.
-Promoting staging to prod is that same line, copied between two overlays — so
+Promoting UAT to prod is that same line, copied between two overlays — so
 the two Applications show independent diffs and prod never moves by accident.
 
 ## Sync is manual by design
@@ -67,11 +74,11 @@ in the diff and decide, instead of finding out from a dead URL.
 install first, or capture the live Service into the repo so git matches reality:
 
 ```sh
-kubectl -n company get svc employee-web -o yaml > /tmp/svc.yaml   # then fold into k8s/base/
+kubectl -n uat get svc employee-web -o yaml > /tmp/svc.yaml   # then fold into k8s/base/
 ```
 
 Once the repo describes what is genuinely running, enable automation by
-uncommenting the `automated:` block. **Turn it on for staging first** — that is
+uncommenting the `automated:` block. **Turn it on for UAT first** — that is
 the environment whose whole job is finding out what auto-sync would do before
 prod does. Leaving prod manual keeps promotion a decision rather than a
 side effect of a merge.

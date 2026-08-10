@@ -71,20 +71,20 @@ cd infra
 make envs
 ```
 
-## 5. Deploy — and understand why `staging` will not work here
+## 5. Deploy — and understand why `uat` will not work here
 
 Try the honest thing first:
 
 ```sh
-make deploy ENV=staging
-kubectl -n company get pods
+make deploy ENV=uat
+kubectl -n uat get pods
 ```
 
 The pods sit `Pending` and never move. `get pods` will not tell you why —
 this will:
 
 ```sh
-kubectl -n company describe pod <name> | tail -20
+kubectl -n uat describe pod <name> | tail -20
 ```
 
 ```
@@ -98,16 +98,16 @@ The rule is right; the cluster is too small for it.
 Use the overlay built for this:
 
 ```sh
-kubectl delete -k k8s/overlays/staging
+kubectl delete -k k8s/overlays/uat
 make deploy ENV=ec2-test
-kubectl -n company get pods -w
+kubectl -n uat get pods -w
 ```
 
 [`k8s/overlays/ec2-test`](../k8s/overlays/ec2-test/kustomization.yaml) is the
 same base with the affinity patched out and one replica each. It is **test
 only** — and note what that costs you: the nodeAffinity rule is no longer being
 exercised. To test that rule for real, add a second k3s agent node and go back
-to `ENV=staging`.
+to `ENV=uat`.
 
 ## 6. Install the ingress controller
 
@@ -153,9 +153,9 @@ silently inert. k3s ships NetworkPolicy enforcement — but verify rather than
 assume, because "looks protected and isn't" is the worst state to be in:
 
 ```sh
-kubectl -n company get networkpolicy
+kubectl -n uat get networkpolicy
 
-kubectl -n company run probe --rm -it --restart=Never \
+kubectl -n uat run probe --rm -it --restart=Never \
   --image=curlimages/curl:8.10.1 -- \
   curl -s --max-time 3 http://1.1.1.1
 ```
@@ -179,7 +179,7 @@ your AWS credentials."
 On your laptop this address goes nowhere. Here it is live.
 
 ```sh
-kubectl -n company run imds --rm -it --restart=Never \
+kubectl -n uat run imds --rm -it --restart=Never \
   --image=curlimages/curl:8.10.1 -- sh -c '
     TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
       -H "X-aws-ec2-metadata-token-ttl-seconds: 60" --max-time 3)
@@ -191,7 +191,7 @@ With the policy working, this returns nothing. Now watch it fail — remove the
 policy, re-run, and put it back:
 
 ```sh
-kubectl -n company delete networkpolicy deny-all-egress
+kubectl -n uat delete networkpolicy deny-all-egress
 # re-run the probe above: it now prints your instance id
 make deploy ENV=ec2-test        # restores the policy
 ```
@@ -219,7 +219,7 @@ with it. Stopping is not enough — a stopped instance still bills for storage.
 
 | Symptom | Cause |
 |---|---|
-| Pods `Pending` forever | Using `ENV=staging` on one node. See step 5. |
+| Pods `Pending` forever | Using `ENV=uat` on one node. See step 5. |
 | `ImagePullBackOff` | Private ECR on k3s: usually the `ecr-creds` Secret is missing or its 12-hour token expired — recreate it (see docs/deployment.md). Otherwise check the tag exists: `aws ecr describe-images --region us-east-1 --repository-name employee-web --query 'imageDetails[].imageTags'` |
 | Ingress has no `ADDRESS` | Expected with the baremetal controller — use the NodePort. |
 | curl from laptop hangs | Security group source IP, or wrong NodePort. |

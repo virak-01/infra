@@ -6,7 +6,7 @@
   Deployments ([`k8s/base/web/deployment.yaml`](../k8s/base/web/deployment.yaml)).
   These pods never call the Kubernetes API, so a container compromise hands over
   no cluster credential.
-- **Pod Security Standards** — the `company` namespace enforces `baseline`
+- **Pod Security Standards** — every environment namespace enforces `baseline`
   (no privileged containers, hostNetwork, hostPath or host namespaces) and
   warns/audits against `restricted`. Enforcement moves to `restricted` once the
   images run as non-root.
@@ -38,7 +38,7 @@ cannot affect inbound requests, kubelet probes, or NodePort access.
 Roll back with:
 
 ```sh
-kubectl -n company delete networkpolicy web-allow-ingress
+kubectl -n uat delete networkpolicy web-allow-ingress
 ```
 
 On a cluster already serving users, stage it. Comment the policy out of
@@ -62,7 +62,7 @@ make deploy && make rollout
 # ... verify http://<ingress>/employee and /user ...
 # uncomment the line, then:
 make deploy
-kubectl -n company get pods -w
+kubectl -n uat get pods -w
 ```
 
 Under Argo CD this is handled for you: `web-allow-ingress` carries

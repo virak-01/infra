@@ -1,6 +1,13 @@
 # Single Ingress fronting both sites:
-#   http://<address>/employee  -> employee-web
-#   http://<address>/user      -> user-web
+#   https://<host>/employee  -> employee-web
+#   https://<host>/user      -> user-web
+#
+# No `host` here — each overlay patches its own in, and it MUST. uat and prod
+# share a cluster, so both render this same Ingress into the same controller. A
+# namespace is not a routing boundary: two hostless claims on `/employee` in
+# one ingress class collide, and ingress-nginx awards the path to whichever
+# object has the older CreationTimestamp. Nothing is logged; one environment
+# simply starts answering the other's traffic.
 #
 # Targets the community ingress-nginx controller, which must be installed in
 # the cluster — see docs/deployment.md.
@@ -31,7 +38,8 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: company-web
-  namespace: company
+  # No namespace: the overlay's `namespace:` owns it, the same as every other
+  # resource in this base.
 spec:
   ingressClassName: nginx
   rules:

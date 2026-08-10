@@ -21,18 +21,24 @@ k8s/
     user/       name, image, probe path for the user site
     namespace.yaml  ingress.yaml  networkpolicy-*.yaml
   overlays/
-    staging/    tag + replicas for the staging cluster
-    prod/       tag + replicas for the prod cluster
-    ec2-test/   throwaway single-node box — NOT for real use
+    uat/        namespace + tag + replicas + host for UAT
+    prod/       namespace + tag + replicas + host for prod
 
 argocd/       one Application per environment
 docs/         deployment, security, Argo CD, EC2 testing
-local/        kind config for a local learning cluster
 ```
 
-Staging and prod are **separate clusters**, so both use the `company` namespace
-and identical resource names — the kubectl context is what picks the
-environment. The overlays differ only in image tag and replica count.
+UAT and prod share **one cluster** and are separated by **namespace** — `uat`
+and `prod`. Resource names are identical in both, which namespaces make safe,
+so `ENV` alone picks the environment: it names both the overlay directory and
+the namespace. The base sets no namespace at all; each overlay declares its
+own, and kustomize uses that to stamp every resource *and* to rename
+`base/namespace.yaml`'s Namespace object.
+
+The overlays differ in exactly four things: namespace, image tag, replica
+count, and **Ingress host** — that last one is not optional. Two hostless
+Ingresses claiming `/employee` in the same cluster collide silently, and the
+path goes to whichever was created first.
 
 Each image serves its files under a matching subpath
 (`/usr/share/nginx/html/employee/`), so the Ingress needs no rewrite rules and
@@ -45,28 +51,27 @@ purpose — a tag is a release decision, so it lives in an overlay.
 
 ```sh
 make envs                       # what each environment is pinned to
-make render ENV=staging         # print exactly what would be applied
-make diff   ENV=staging         # what would change in the live cluster
-make deploy ENV=staging         # apply k8s/overlays/staging
-make rollout ENV=staging        # wait for both Deployments
+make render ENV=uat             # print exactly what would be applied
+make diff   ENV=uat             # what would change in the live cluster
+make deploy ENV=uat             # apply k8s/overlays/uat into namespace uat
+make rollout ENV=uat            # wait for both Deployments
 ```
 
 `make` with no target lists everything. `ENV` defaults to `prod` and is the only
 variable you normally set.
 
-> `ENV` selects the overlay, **not the cluster.** Since the two environments
-> live on different clusters, run `kubectl config current-context` before any
-> `deploy` or `diff`.
+> `ENV` is both the overlay and the namespace. One cluster holds both
+> environments, so a wrong `ENV` deploys to the wrong namespace rather than
+> failing — `make current ENV=<env>` shows what is actually running there.
 
 ## Shipping a change
 
 Once a new tag has been published to the registry, deploying it is a one-line
-edit. Set it in [`k8s/overlays/staging/`](k8s/overlays/staging/kustomization.yaml),
-commit, and let staging prove it:
+edit. Set it in [`k8s/overlays/uat/`](k8s/overlays/uat/kustomization.yaml),
+commit, and let UAT prove it:
 
 ```sh
-kubectl config use-context <staging>
-make deploy rollout ENV=staging
+make deploy rollout ENV=uat
 ```
 
 Promote by setting the **same** tag in [`k8s/overlays/prod/`](k8s/overlays/prod/kustomization.yaml)
@@ -94,8 +99,8 @@ ingress controller. `kubeconform` is optional and only needed for `make validate
 
 
 
-kubectl -n company get secret ecr-creds
-kubectl -n company rollout restart deploy/employee-web deploy/user-web
-make rollout
-kubectl -n company get pods
+kubectl -n uat get secret ecr-creds
+kubectl -n uat rollout restart deploy/employee-web deploy/user-web
+make rollout ENV=uat
+kubectl -n uat get pods
 

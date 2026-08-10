@@ -1,0 +1,50 @@
+# Argo CD Application for UAT:
+#
+#   kubectl apply -f argocd/application-uat.yaml
+#
+# UAT and prod share a cluster now, so one Argo CD manages both and both
+# Applications are applied to it. `server: https://kubernetes.default.svc`
+# means "the cluster I am running in", so neither needs cluster registration
+# or credentials.
+#
+# argocd/ is not part of the synced path — Argo CD does not manage its own
+# Application, so this file is applied once by hand.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  # Named for the environment it syncs, matching `destination.namespace` below
+  # and `ENV` in the Makefile. Both Applications live in the same Argo CD, so
+  # the names must differ — and this way the UI reads `uat` / `prod` rather
+  # than one name plus a suffixed variant of it.
+  name: uat
+  namespace: argocd
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/virak0001/bubernetes.git
+    targetRevision: main
+    path: k8s/overlays/uat
+
+  destination:
+    server: https://kubernetes.default.svc
+    # Matches the overlay's own `namespace: uat`. It has to: this is the
+    # namespace CreateNamespace=true would create, and the default for any
+    # resource that does not name one itself.
+    namespace: uat
+
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+
+    # Manual for now, matching prod — a first sync against a cluster that
+    # already has resources can delete things you meant to keep, and that is
+    # worth seeing in a diff once.
+    #
+    # UAT is the right place to turn automation on first, though: it is the
+    # environment whose whole job is catching this before prod does. Once the
+    # first sync is clean, uncomment:
+    #
+    #   automated:
+    #     prune: true      # delete resources removed from git
+    #     selfHeal: true   # revert manual kubectl changes

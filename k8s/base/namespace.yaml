@@ -1,16 +1,14 @@
+# One Namespace definition, rendered once per environment.
+#
+# `name` is a placeholder and is never applied as written: kustomize's
+# namespace transformer renames a Namespace object to whatever the overlay
+# declares, so ../overlays/uat renders this as `uat` and ../overlays/prod as
+# `prod`. Edit the labels here and both environments get them.
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: company
+  name: placeholder
   labels:
-    # Pod Security Standards. `baseline` blocks the genuinely dangerous things
-    # — privileged containers, hostNetwork, hostPath mounts, host namespaces —
-    # while still permitting a container that runs as root.
-    #
-    # Enforcement is deliberately NOT `restricted` yet: these images run nginx
-    # as root, so `restricted` would refuse to start the pods. `warn`/`audit`
-    # report what would fail. Flip enforce to `restricted` once the images are
-    # rebuilt on nginxinc/nginx-unprivileged.
     pod-security.kubernetes.io/enforce: baseline
     pod-security.kubernetes.io/enforce-version: latest
     pod-security.kubernetes.io/warn: restricted

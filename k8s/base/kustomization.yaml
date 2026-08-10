@@ -1,14 +1,20 @@
-# The whole `company` namespace, environment-independent.
+# One environment's whole namespace, environment-independent.
 #
-# Not applied directly: the two site images render untagged here, so deploy an
-# overlay (../overlays/prod) instead. `kubectl kustomize k8s/base` is still the
-# quickest way to see the shared shape.
+# Not applied directly, for two reasons now: the two site images render
+# untagged here, and there is deliberately no namespace (see below), so the
+# Namespace object would render under its placeholder name. Deploy an overlay
+# (../overlays/uat, ../overlays/prod) instead. `kubectl kustomize k8s/base` is
+# still the quickest way to see the shared shape.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# Owns the namespace field for every resource below, so no individual manifest
-# repeats it and none can drift into the wrong namespace.
-namespace: company
+# No `namespace:` here on purpose — it belongs to the overlay.
+#
+# uat and prod share one cluster and are told apart by namespace, so the
+# namespace IS the environment. Setting it here would pin every environment to
+# the same one. Each overlay declares its own, which kustomize then stamps onto
+# every resource below AND uses to rename namespace.yaml's Namespace object, so
+# one file serves both environments.
 
 resources:
   - namespace.yaml

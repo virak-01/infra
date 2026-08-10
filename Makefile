@@ -1,5 +1,5 @@
 # Every command in the docs, in one place, so README and reality cannot drift.
-# Override any variable on the command line: `make deploy ENV=staging`.
+# Override any variable on the command line: `make deploy ENV=uat`.
 #
 # This repo deploys images; it does not build them. The sites are built and
 # pushed wherever their source lives, and the cluster pulls the tag named in
@@ -9,7 +9,11 @@ ENV      ?= prod
 SITES    := employee user
 
 OVERLAY  := k8s/overlays/$(ENV)
-NS       := company
+
+# The namespace IS the environment: uat and prod share one cluster, and each
+# overlay declares `namespace: $(ENV)`. Keep the overlay directory name and the
+# namespace identical and this one line covers every target below.
+NS       := $(ENV)
 
 AWS_REGION   ?= us-east-1
 ECR_REGISTRY ?= 043309361013.dkr.ecr.$(AWS_REGION).amazonaws.com
@@ -22,8 +26,8 @@ help: ## Show this help
 	  | awk -F':.*?## ' '{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 	@echo
 	@echo "  vars: ENV=$(ENV)   (overlays: $$(ls k8s/overlays | tr '\n' ' '))"
-	@echo "  note: staging and prod are separate clusters — check your context"
-	@echo "        before deploy/diff: kubectl config current-context"
+	@echo "  note: uat and prod share one cluster, separated by namespace."
+	@echo "        ENV picks the environment — it is both the overlay and the ns."
 
 envs: ## Show what each environment is pinned to
 	@for o in k8s/overlays/*/; do \
@@ -33,10 +37,10 @@ envs: ## Show what each environment is pinned to
 	    | sed 's/^ *-* *image: */  image    /; s/^  replicas: /  replicas /'; \
 	done
 
-current: ## Show what the live cluster is running, and which overlay it matches
-	@# ENV selects what you would apply, not what is deployed. Both overlays use
-	@# the same namespace and resource names, so the only way to tell them apart
-	@# is to compare the live objects against each overlay in turn.
+current: ## Show what ENV's namespace is running, and which overlay it matches
+	@# Scoped to ENV's namespace: the environments no longer have to be told
+	@# apart by diffing, since each one owns a namespace. The diff loop below is
+	@# still worth running — it catches drift and mid-rollout states.
 	@echo "context:   $$(kubectl config current-context)"
 	@echo "namespace: $(NS)"
 	@echo

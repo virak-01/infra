@@ -51,7 +51,7 @@ no Secret exists to go stale. This is why the pod spec has no `imagePullSecrets`
 provider exists there, so the credentials must be stored:
 
 ```sh
-kubectl -n company create secret docker-registry ecr-creds \
+kubectl -n uat create secret docker-registry ecr-creds \
   --docker-server=043309361013.dkr.ecr.us-east-1.amazonaws.com \
   --docker-username=AWS \
   --docker-password="$(aws ecr get-login-password --region us-east-1)"
@@ -70,16 +70,16 @@ then reference it from the pod spec via `imagePullSecrets: [{name: ecr-creds}]`.
 `ENV` selects the overlay and defaults to `prod`:
 
 ```sh
-make render ENV=staging   # print the manifests; nothing touches the cluster
-make diff   ENV=staging   # what would change against what is live
-make deploy ENV=staging   # kubectl apply -k k8s/overlays/staging
+make render ENV=uat   # print the manifests; nothing touches the cluster
+make diff   ENV=uat   # what would change against what is live
+make deploy ENV=uat   # kubectl apply -k k8s/overlays/uat
 ```
 
 `make deploy` prints pods, services and the Ingress when it finishes. Once the
 load balancer is provisioned:
 
 ```sh
-kubectl -n company get ingress company-web \
+kubectl -n uat get ingress company-web \
   -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
 # -> http://<hostname>/employee   and   http://<hostname>/user
 ```
@@ -135,8 +135,8 @@ subnets, or subnet auto-discovery fails.
 ## Check it without an Ingress
 
 ```sh
-kubectl -n company port-forward svc/employee-web 8081:80   # http://localhost:8081/employee
-kubectl -n company port-forward svc/user-web     8082:80   # http://localhost:8082/user
+kubectl -n uat port-forward svc/employee-web 8081:80   # http://localhost:8081/employee
+kubectl -n uat port-forward svc/user-web     8082:80   # http://localhost:8082/user
 ```
 
 ## Worker nodes only
@@ -155,7 +155,7 @@ the cluster as nodes.
 Confirm placement after deploying:
 
 ```sh
-kubectl -n company get pods -o wide
+kubectl -n uat get pods -o wide
 kubectl get nodes -L node-role.kubernetes.io/control-plane
 ```
 
@@ -166,47 +166,53 @@ excludes control-plane labels rather than requiring a worker label.
 
 ## The two environments
 
-`staging` and `prod` are separate clusters. Both deploy into the `company`
-namespace with identical resource names — deliberately, since staging is only
-worth testing against if it is shaped like prod. The overlays differ in exactly
-two fields:
+`uat` and `prod` share one cluster and are separated by namespace — one named
+`uat`, one named `prod`. Resource names are identical in both, deliberately,
+since UAT is only worth testing against if it is shaped like prod; the
+namespace is what keeps identical names from colliding. `ENV` names the overlay
+and the namespace at once.
 
-|  | staging | prod |
+The overlays differ in exactly four fields:
+
+|  | uat | prod |
 |---|---|---|
+| namespace | `uat` | `prod` |
 | replicas | 1 | 2 |
-| image tag | moves first | moves after staging proves the tag |
+| image tag | moves first | moves after UAT proves the tag |
+| Ingress host | `uat.api.example.com` | `api.example.com` |
+
+That last row is load-bearing, not cosmetic. A namespace is not a routing
+boundary: both Ingresses reach the same controller, so if both claimed
+`/employee` with no host, ingress-nginx would award the path to whichever
+object was created first and send UAT traffic to prod, or the reverse. No error
+is logged. Distinct hosts are what separate them.
 
 `make envs` prints both, rendered, so you can see how far apart they have drifted.
 
-**`ENV` picks the overlay, not the cluster.** There is no binding between the
-two — `make deploy ENV=prod` against a staging context deploys prod's manifests
-to staging. Check first:
-
-```sh
-kubectl config current-context
-```
+**`ENV` picks the overlay and the namespace together.** Both live on one
+cluster, so a wrong `ENV` does not fail — it quietly deploys into the other
+environment's namespace. `make current ENV=<env>` shows what is really running
+in one before you touch it.
 
 ### Promoting a build
 
 Starts from a tag already published to the registry — promotion never builds.
 
 ```sh
-# 1. staging
-#    set newTag: 1.0.1 in k8s/overlays/staging/kustomization.yaml, commit
-kubectl config use-context <staging>
-make deploy rollout ENV=staging
+# 1. uat
+#    set newTag: 1.0.1 in k8s/overlays/uat/kustomization.yaml, commit
+make deploy rollout ENV=uat
 # ... verify ...
 
 # 2. prod — the same tag, already tested
 #    set newTag: 1.0.1 in k8s/overlays/prod/kustomization.yaml, commit
-kubectl config use-context <prod>
 make diff ENV=prod                     # read it
 make deploy rollout ENV=prod
 ```
 
-The two overlays name the **same** tag, so prod runs the exact bytes staging
+The two overlays name the **same** tag, so prod runs the exact bytes UAT
 proved. Rebuilding between the two would produce a different image under the
-same name and throw away everything staging told you.
+same name and throw away everything UAT told you.
 
 `make envs` shows how far apart the environments have drifted.
 
@@ -215,7 +221,7 @@ same name and throw away everything staging told you.
 Copy an overlay; never copy manifests:
 
 ```sh
-cp -r k8s/overlays/staging k8s/overlays/dev
+cp -r k8s/overlays/uat k8s/overlays/dev
 ```
 
 If it shares a cluster with an existing environment, it also needs a
