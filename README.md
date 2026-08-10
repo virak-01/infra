@@ -148,6 +148,9 @@ kubectl -n uat get pods
 Confirm, then fix:
 kubectl -n prod get configmap                 # website-config will be absent
 make app-config ENV=prod                      # creates it + restarts the deployments
+
+## Port Running
+
 kubectl -n prod get pods -w
 
 
