@@ -148,3 +148,9 @@ kubectl -n prod get configmap                 # website-config will be absent
 make app-config ENV=prod                      # creates it + restarts the deployments
 kubectl -n prod get pods -w
 
+
+## NodePort
+kubectl -n ingress-nginx patch svc ingress-nginx-controller -p '{"spec":{"type":"NodePort"}}'
+
+## Create Token
+kubeadm token create --print-join-command

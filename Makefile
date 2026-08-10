@@ -143,9 +143,21 @@ ecr-secret: ## Mint the ECR pull Secret now, by running the refresh CronJob imme
 	@echo "context: $$(kubectl config current-context)"
 	kubectl -n $(NS) delete job ecr-credentials-refresh-now --ignore-not-found
 	kubectl -n $(NS) create job ecr-credentials-refresh-now --from=cronjob/ecr-credentials-refresh
+	@# On failure, show status and events BEFORE logs. A pod that never got
+	@# scheduled has no logs at all, so a logs-only failure path reports
+	@# "no pods found" and hides the real reason — which lives in the events,
+	@# usually FailedScheduling from a taint or exhausted CPU.
 	@kubectl -n $(NS) wait --for=condition=complete --timeout=120s job/ecr-credentials-refresh-now \
-	  || { echo; echo "job did not complete — logs:"; \
-	       kubectl -n $(NS) logs job/ecr-credentials-refresh-now --all-containers --tail=30; exit 1; }
+	  || { echo; echo "job did not complete."; \
+	       echo; echo "--- pod ---"; \
+	       kubectl -n $(NS) get pods -l job-name=ecr-credentials-refresh-now -o wide; \
+	       echo; echo "--- events ---"; \
+	       kubectl -n $(NS) describe pod -l job-name=ecr-credentials-refresh-now \
+	         | sed -n '/^Events:/,$$p'; \
+	       echo; echo "--- logs (empty if the pod never started) ---"; \
+	       kubectl -n $(NS) logs -l job-name=ecr-credentials-refresh-now \
+	         --all-containers --tail=30 2>&1 || true; \
+	       exit 1; }
 	@kubectl -n $(NS) get secret ecr-creds
 
 rollout: ## Wait for both Deployments to finish rolling out
