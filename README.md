@@ -136,6 +136,8 @@ fails any overlay that renders an untagged image, since that resolves to
 `kubectl` (1.27+, for the built-in kustomize), `docker`, and a cluster with an
 ingress controller. `kubeconform` is optional and only needed for `make validate`.
 
+## Show all nodes port
+kubectl -n kube-system get pods
 
 
 kubectl -n uat get secret ecr-creds

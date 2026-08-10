@@ -18,6 +18,11 @@ kubectl apply -f argocd/application-uat.yaml
 kubectl apply -f argocd/application-prod.yaml
 ```
 
+Check Port Running
+``
+kubectl -n argocd get svc argocd-server
+``
+
 | File | Application | Syncs |
 |---|---|---|
 | [`application-uat.yaml`](../argocd/application-uat.yaml) | `uat` | `k8s/overlays/uat` |
@@ -43,6 +48,18 @@ whenever they change.
 
 Reach the UI without exposing it publicly — an internet-facing Argo CD is a
 cluster takeover waiting to happen:
+
+# all Argo CD services and their ports
+kubectl -n argocd get svc
+
+
+# just the UI/API service
+kubectl -n argocd get svc argocd-server
+
+# port mapping, one line per port
+kubectl -n argocd get svc argocd-server \
+  -o jsonpath='{range .spec.ports[*]}{.name}{"  port="}{.port}{"  nodePort="}{.nodePort}{"\n"}{end}'
+
 
 ```sh
 kubectl -n argocd port-forward svc/argocd-server 8080:443
