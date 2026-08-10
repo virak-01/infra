@@ -154,3 +154,31 @@ kubectl -n ingress-nginx patch svc ingress-nginx-controller -p '{"spec":{"type":
 
 ## Create Token
 kubeadm token create --print-join-command
+
+### Before Running Code, make sure work node is ready. 
+## Then install Calico:
+kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.2/manifests/calico.yaml
+kubectl get nodes -w
+![alt text](image.png)
+
+
+# 0. prerequisite: a cluster with at least one SCHEDULABLE node,
+#    plus ingress-nginx installed. This is your current blocker.
+
+make deploy     ENV=prod        # 1. creates the namespace, the CronJob, everything
+make app-config ENV=prod        # 2. the website-config ConfigMap
+make aws-creds  ENV=prod AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...
+make ecr-secret ENV=prod        # 4. mints ecr-creds by running the CronJob
+make rollout    ENV=prod        # 5. wait for both Deployments
+
+
+
+First check which pod CIDR the cluster was initialised with, because the CNI manifest must match:
+
+
+kubectl -n kube-system get cm kubeadm-config -o yaml | grep -i podSubnet
+Then install Calico:
+
+
+kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.2/manifests/calico.yaml
+kubectl get nodes -w
