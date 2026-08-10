@@ -14,15 +14,6 @@ metadata:
   namespace: argocd
 spec:
   project: default
-  ports:
-    - name: http
-      port: 80
-      targetPort: 8080
-      nodePort: 30080
-    - name: https
-      port: 443
-      targetPort: 8080
-      nodePort: 30443
 
   source:
     repoURL: https://github.com/virak0001/bubernetes.git

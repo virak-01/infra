@@ -1,0 +1,47 @@
+# Pins Argo CD's own UI to a fixed NodePort.
+#
+# Without this the port is assigned at random from the node-port range, so it
+# changes whenever the Service is recreated — and the URL you bookmarked stops
+# working. This file is the port, written down.
+#
+#   kubectl apply --server-side -f argocd/argocd-server-nodeport.yaml
+#
+# --server-side matters: this patches a Service that the upstream install.yaml
+# owns. Server-side apply merges only the fields named here and leaves the rest
+# (selector, sessionAffinity, the labels Argo CD relies on) to upstream. A plain
+# `kubectl apply` would instead treat this file as the whole intended object and
+# strip everything absent from it.
+#
+# Re-apply after any Argo CD upgrade — reinstalling install.yaml resets the
+# Service to ClusterIP.
+#
+# Both ports must sit inside the cluster's --service-node-port-range, which
+# defaults to 30000-32767, and must not already be taken. Check before editing:
+#   kubectl get svc -A -o jsonpath='{range .items[*].spec.ports[*]}{.nodePort}{"\n"}{end}' | sort -un
+#
+# Reach the UI on the HTTPS one: https://<node-ip>:30443
+# The HTTP port only redirects there, so browsing it directly reads as a
+# redirect loop rather than a working page.
+#
+# Worth stating plainly: this publishes a UI with full write access to the
+# cluster on every node's public interface. Keep the security group scoped to
+# your own IP, or drop this file and use a port-forward over SSH instead —
+# see docs/argocd.md.
+apiVersion: v1
+kind: Service
+metadata:
+  name: argocd-server
+  namespace: argocd
+spec:
+  type: NodePort
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      nodePort: 30080
+    - name: https
+      port: 443
+      # 8080 is correct for BOTH ports, and is not a typo: argocd-server serves
+      # HTTP and HTTPS from the same container port and decides per connection.
+      targetPort: 8080
+      nodePort: 30443
