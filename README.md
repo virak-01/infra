@@ -23,6 +23,8 @@ k8s/
   overlays/
     uat/        namespace + tag + replicas + host for UAT
     prod/       namespace + tag + replicas + host for prod
+  components/
+    ingress-nginx/  opt-in: swap the ALB class for ingress-nginx
 
 argocd/       one Application per environment
 docs/         deployment, security, Argo CD, EC2 testing
@@ -187,3 +189,7 @@ Then install Calico:
 
 kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.2/manifests/calico.yaml
 kubectl get nodes -w
+
+
+kubectl -n argocd get svc argocd-server \
+  -o jsonpath='{.spec.type}{"\n"}{range .spec.ports[*]}{.name}{" "}{.port}{" -> nodePort "}{.nodePort}{"\n"}{end}'

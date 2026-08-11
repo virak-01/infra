@@ -9,8 +9,26 @@
 # object has the older CreationTimestamp. Nothing is logged; one environment
 # simply starts answering the other's traffic.
 #
-# Targets the community ingress-nginx controller, which must be installed in
-# the cluster — see docs/deployment.md.
+# Targets the AWS Load Balancer Controller (`alb`), which must be installed in
+# the cluster along with its OIDC provider, IRSA role and IAM policy, and needs
+# `kubernetes.io/role/elb=1` tags on the public subnets or subnet
+# auto-discovery fails. See docs/deployment.md.
+#
+# On a cluster WITHOUT that controller — any self-managed kubeadm or k3s box —
+# this Ingress is accepted by the API server and then silently ignored: no
+# routing, empty ADDRESS, no error anywhere. Enable the nginx component there:
+#
+#   # k8s/overlays/<env>/kustomization.yaml
+#   components:
+#     - ../../components/ingress-nginx
+#
+# `target-type: ip` below registers pod addresses directly with the target
+# group, which requires VPC-routable pod IPs — the AWS VPC CNI. It does NOT
+# work on an overlay CNI such as Calico, whose addresses exist only inside the
+# cluster. There, use `instance` and make the Services NodePort.
+#
+# Unlike nginx, ALB has no default backend: a request matching no rule returns
+# a bare 404 from the load balancer.
 #
 # NO REWRITE, deliberately. Each backend serves its own subpath already, so the
 # prefix has to reach it intact. Stripping it breaks the page rather than the
@@ -28,20 +46,22 @@
 # Service maps 80 -> targetPort `http`, which the pod publishes on 3000, so
 # this stays 80 regardless of what the image listens on.
 #
-# To move back to the AWS Load Balancer Controller on EKS, set ingressClassName
-# to "alb" and add its annotations:
-#   alb.ingress.kubernetes.io/scheme: internet-facing
-#   alb.ingress.kubernetes.io/target-type: ip
-#   alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
-#   alb.ingress.kubernetes.io/healthcheck-path: /employee
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: company-web
   # No namespace: the overlay's `namespace:` owns it, the same as every other
   # resource in this base.
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    # Must be a path a backend actually serves. `/` returns 404 — both sites
+    # serve only under their own prefix — and a health check that 404s marks
+    # every target unhealthy.
+    alb.ingress.kubernetes.io/healthcheck-path: /employee
 spec:
-  ingressClassName: nginx
+  ingressClassName: alb
   rules:
     - http:
         paths:

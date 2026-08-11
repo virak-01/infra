@@ -1,0 +1,73 @@
+# Swaps the Ingress from the AWS Load Balancer Controller back to ingress-nginx.
+#
+# Opt-in and inert until an overlay asks for it. To use it, add to
+# k8s/overlays/<env>/kustomization.yaml:
+#
+#   components:
+#     - ../../components/ingress-nginx
+#
+# A Component, not an overlay: components are composable fragments that layer
+# onto whatever includes them, so this can be switched on per environment
+# without duplicating the overlay or forking the base.
+#
+# ---------------------------------------------------------------------------
+# WHEN YOU NEED THIS
+#
+# The base targets `alb`, which only works where the AWS Load Balancer
+# Controller is installed — in practice, EKS. Anywhere else, the base Ingress
+# is accepted by the API server and then silently ignored: no routing, empty
+# ADDRESS, no error anywhere. That covers every self-managed cluster:
+#
+#   - kubeadm on EC2
+#   - k3s / kind / minikube
+#   - any cluster using an overlay CNI, where ALB's `target-type: ip` cannot
+#     reach pod addresses that exist only inside the cluster
+#
+# On those, install the community ingress-nginx controller (see
+# docs/deployment.md) and enable this component.
+#
+# ---------------------------------------------------------------------------
+# WHAT IT CHANGES
+#
+# The class, and the removal of ALB's annotations. Leaving them would be
+# harmless to nginx, which ignores annotations it does not own, but it would
+# leave the rendered object advertising a load balancer config that nothing
+# implements — the kind of thing that reads as configured when it is inert.
+#
+# The path rules themselves are untouched: /employee and /user are the same
+# under either controller, which is the point of keeping this to one patch.
+#
+# One behaviour difference worth knowing: nginx HAS a default backend, so a
+# request matching no rule gets nginx's 404 page rather than a bare 404 from
+# a load balancer. On this repo's setup prod is deliberately hostless and
+# therefore the catch-all, so unmatched hosts reach prod rather than any
+# default backend — see k8s/overlays/prod/kustomization.yaml.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+patches:
+  - target:
+      kind: Ingress
+    # JSON 6902 `remove`, NOT a strategic merge patch setting the keys to null.
+    # Annotations are map[string]string, so a YAML null is coerced to the
+    # four-character string "null" and the key survives with a garbage value
+    # rather than being deleted. `remove` actually removes it.
+    #
+    # `/` inside a key must be escaped as ~1 in a JSON Pointer, which is why
+    # these paths look the way they do.
+    #
+    # These ops assume the annotations exist — they do, from ../../base — and
+    # a `remove` on a missing path is an error, which is the behaviour you want
+    # here: it fails loudly if the base stops setting them.
+    patch: |
+      - op: remove
+        path: /metadata/annotations/alb.ingress.kubernetes.io~1scheme
+      - op: remove
+        path: /metadata/annotations/alb.ingress.kubernetes.io~1target-type
+      - op: remove
+        path: /metadata/annotations/alb.ingress.kubernetes.io~1listen-ports
+      - op: remove
+        path: /metadata/annotations/alb.ingress.kubernetes.io~1healthcheck-path
+      - op: replace
+        path: /spec/ingressClassName
+        value: nginx

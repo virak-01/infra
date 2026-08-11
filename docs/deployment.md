@@ -115,22 +115,44 @@ To skip the load balancer cost while testing, install with
 No rewrite annotations are needed. Each image serves its files under the
 matching subpath, so the path the browser requests is the path nginx looks up.
 
-### AWS ALB instead
+### ingress-nginx instead
 
-Set `ingressClassName: alb` in [`k8s/base/ingress.yaml`](../k8s/base/ingress.yaml)
-and add:
+The base targets **`alb`** — the AWS Load Balancer Controller. That is the
+default because EKS is the intended destination.
+
+**It does nothing on a cluster without that controller.** An Ingress whose
+class no controller implements is accepted by the API server and then silently
+ignored: no routing, empty `ADDRESS`, no error anywhere. That covers every
+self-managed cluster — kubeadm on EC2, k3s, kind. There, install the community
+ingress-nginx controller (above) and enable the component:
 
 ```yaml
-metadata:
-  annotations:
-    alb.ingress.kubernetes.io/scheme: internet-facing
-    alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+# k8s/overlays/<env>/kustomization.yaml
+components:
+  - ../../components/ingress-nginx
 ```
 
-That route additionally needs the AWS Load Balancer Controller installed (OIDC
-provider, IRSA, IAM policy) and `kubernetes.io/role/elb=1` tags on the public
-subnets, or subnet auto-discovery fails.
+It flips the class back to `nginx` and strips the four ALB annotations. Path
+rules are untouched, so `/employee` and `/user` behave identically either way.
+See [`k8s/components/ingress-nginx/`](../k8s/components/ingress-nginx/kustomization.yaml).
+
+Two things decide whether the ALB path works at all:
+
+**The controller and its IAM.** It needs an OIDC provider, IRSA, the
+AWS-published IAM policy, and `kubernetes.io/role/elb=1` tags on the public
+subnets or subnet auto-discovery fails. Straightforward on EKS; substantially
+more work on kubeadm, which has no IRSA to draw credentials from.
+
+**`target-type` has to match the CNI.** The base sets `ip`, which registers pod
+addresses directly with the target group and therefore needs VPC-routable pod
+IPs — the AWS VPC CNI. On an overlay CNI such as **Calico**, pod addresses
+exist only inside the cluster and the ALB cannot reach them. Use `instance`
+there, and make the Services `NodePort`, since instance targets route to a node
+port and have no ClusterIP to reach.
+
+One behavioural difference: ALB has no default backend, so a request matching
+no rule returns a bare 404 from the load balancer rather than nginx's default
+backend.
 
 ## Check it without an Ingress
 
