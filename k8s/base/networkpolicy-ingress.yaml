@@ -17,6 +17,8 @@ spec:
     - Ingress
 
   ingress:
+    # The ingress-nginx path, kept so the ingress-nginx component still works
+    # if an overlay switches back to it.
     - from:
         - namespaceSelector:
             matchLabels:
@@ -25,10 +27,19 @@ spec:
         - protocol: TCP
           port: 3000
 
-    # Optional: allow kubelet/node traffic if needed
-    # - from:
-    #     - ipBlock:
-    #         cidr: 172.31.0.0/16
-    #   ports:
-    #     - protocol: TCP
-    #       port: 3000
+    # The ALB path. With `target-type: instance` the ALB talks to a node's
+    # NodePort, and kube-proxy forwards from there — so the packet the pod sees
+    # comes from a NODE address, not from any pod or namespace. Without this
+    # rule every ALB health check fails and the target group goes unhealthy,
+    # which reads as a broken app rather than a blocked one.
+    #
+    # MUST match the VPC CIDR the nodes actually sit in. 172.31.0.0/16 is the
+    # AWS default-VPC range; confirm with
+    #   kubectl get nodes -o wide          (the INTERNAL-IP column)
+    # and narrow it once the node addresses are stable.
+    - from:
+        - ipBlock:
+            cidr: 172.31.0.0/16
+      ports:
+        - protocol: TCP
+          port: 3000

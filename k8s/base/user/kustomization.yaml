@@ -19,3 +19,12 @@ images:
 
 patches:
   - path: patch-probes.yaml
+
+  # See ../employee/kustomization.yaml for why this is per-Service.
+  - target:
+      kind: Service
+    patch: |
+      - op: add
+        path: /metadata/annotations
+        value:
+          alb.ingress.kubernetes.io/healthcheck-path: /user/

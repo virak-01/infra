@@ -1,65 +1,21 @@
-# Single Ingress fronting both sites:
-#   https://<host>/employee  -> employee-web
-#   https://<host>/user      -> user-web
-#
-# No `host` here — each overlay patches its own in, and it MUST. uat and prod
-# share a cluster, so both render this same Ingress into the same controller. A
-# namespace is not a routing boundary: two hostless claims on `/employee` in
-# one ingress class collide, and ingress-nginx awards the path to whichever
-# object has the older CreationTimestamp. Nothing is logged; one environment
-# simply starts answering the other's traffic.
-#
-# Targets the AWS Load Balancer Controller (`alb`), which must be installed in
-# the cluster along with its OIDC provider, IRSA role and IAM policy, and needs
-# `kubernetes.io/role/elb=1` tags on the public subnets or subnet
-# auto-discovery fails. See docs/deployment.md.
-#
-# On a cluster WITHOUT that controller — any self-managed kubeadm or k3s box —
-# this Ingress is accepted by the API server and then silently ignored: no
-# routing, empty ADDRESS, no error anywhere. Enable the nginx component there:
-#
-#   # k8s/overlays/<env>/kustomization.yaml
-#   components:
-#     - ../../components/ingress-nginx
-#
-# `target-type: ip` below registers pod addresses directly with the target
-# group, which requires VPC-routable pod IPs — the AWS VPC CNI. It does NOT
-# work on an overlay CNI such as Calico, whose addresses exist only inside the
-# cluster. There, use `instance` and make the Services NodePort.
-#
-# Unlike nginx, ALB has no default backend: a request matching no rule returns
-# a bare 404 from the load balancer.
-#
-# NO REWRITE, deliberately. Each backend serves its own subpath already, so the
-# prefix has to reach it intact. Stripping it breaks the page rather than the
-# route: the app emits absolute asset URLs under its base path, such as
-# /employee/_nuxt/entry.css, and a backend that never saw the prefix 404s every
-# one of them. The HTML renders, the styling does not — which reads as a broken
-# app instead of a routing mistake.
-#
-# For the website image the base path comes from NUXT_APP_BASE_URL, set per
-# Deployment in the overlays. That keeps one image serving both subpaths;
-# `baseURL` in nuxt.config.ts would bake one path in at build time and force
-# two separate images.
-#
-# The backend port is the Service port (80), not the container port. The
-# Service maps 80 -> targetPort `http`, which the pod publishes on 3000, so
-# this stays 80 regardless of what the image listens on.
-#
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: company-web
-  # No namespace: the overlay's `namespace:` owns it, the same as every other
-  # resource in this base.
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
-    alb.ingress.kubernetes.io/target-type: ip
+    # `instance`, not `ip`. `ip` registers pod addresses directly with the
+    # target group, which needs VPC-routable pod IPs — the AWS VPC CNI. This
+    # cluster runs Calico, an overlay CNI whose pod addresses exist only inside
+    # the cluster, so the ALB cannot reach them. `instance` targets the node's
+    # NodePort instead, which is why the Services below must be NodePort.
+    alb.ingress.kubernetes.io/target-type: instance
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
-    # Must be a path a backend actually serves. `/` returns 404 — both sites
-    # serve only under their own prefix — and a health check that 404s marks
-    # every target unhealthy.
-    alb.ingress.kubernetes.io/healthcheck-path: /employee
+    # Fallback only. One target group is created per backend Service, and each
+    # site serves under its own subpath — so /employee is a 404 on user-web.
+    # Each Service carries its own healthcheck-path annotation, which takes
+    # priority over this one; see k8s/base/employee/kustomization.yaml.
+    alb.ingress.kubernetes.io/healthcheck-path: /employee/
 spec:
   ingressClassName: alb
   rules:

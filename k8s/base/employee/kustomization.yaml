@@ -32,3 +32,18 @@ images:
 
 patches:
   - path: patch-probes.yaml
+
+  # This site's ALB health check. The controller builds one target group per
+  # backend Service, and a Service-level annotation beats the Ingress-level
+  # default — necessary because each site serves only its own subpath, so the
+  # Ingress's single healthcheck-path cannot be right for both.
+  #
+  # Same path as the probes above, and for the same reason: under a base path,
+  # / is a 404, and a health check on / would mark every target unhealthy.
+  - target:
+      kind: Service
+    patch: |
+      - op: add
+        path: /metadata/annotations
+        value:
+          alb.ingress.kubernetes.io/healthcheck-path: /employee/

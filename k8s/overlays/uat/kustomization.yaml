@@ -13,11 +13,10 @@ kind: Kustomization
 resources:
   - ../../base
 
-# Same controller swap as ../prod — the two share a cluster, so they must agree
-# on the ingress class or only one of them routes. See ../prod/kustomization.yaml
-# for why, and k8s/components/ingress-nginx/ for what it changes.
-components:
-  - ../../components/ingress-nginx
+# NO ingress-nginx component here, matching ../prod — both environments are
+# served by the ALB. The two share a cluster and must agree on the ingress
+# class, so this file and ../prod/kustomization.yaml change together or not at
+# all.
 
 # The environment. This is the only place it is declared: the base deliberately
 # sets no namespace, so this value both stamps every resource below and renames

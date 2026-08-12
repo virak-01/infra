@@ -5,8 +5,14 @@ kind: Service
 metadata:
   name: web
 spec:
-  # type: ClusterIP
-  type: LoadBalancer
+  # NodePort is required by the Ingress's `target-type: instance`: the ALB
+  # registers nodes and reaches this Service through its node port, which a
+  # ClusterIP Service does not have.
+  #
+  # Not LoadBalancer. That would ask for a second load balancer per site,
+  # bypassing the ALB the Ingress already builds — and nothing on a kubeadm
+  # cluster fulfils it, so it would sit at EXTERNAL-IP <pending> forever.
+  type: NodePort
   selector:
     app: web
   ports:
