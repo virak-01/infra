@@ -9,6 +9,14 @@ kind: Kustomization
 resources:
   - ../../base
 
+# The cluster is kubeadm on EC2, which has no AWS Load Balancer Controller, so
+# the base's `alb` class would be accepted by the API server and then silently
+# ignored — no routing, empty ADDRESS, no error. This flips the class to
+# `nginx` and strips the four ALB annotations. Drop this line if this overlay
+# ever moves to EKS.
+components:
+  - ../../components/ingress-nginx
+
 # The environment. This is the only place it is declared: the base deliberately
 # sets no namespace, so this value both stamps every resource below and renames
 # the base's Namespace object to `prod`.
