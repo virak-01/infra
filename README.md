@@ -197,3 +197,10 @@ kubectl -n argocd get svc argocd-server \
 
 ## Reload env config
 make app-config ENV=prod
+
+kubectl -n prod describe pod -l app=api-auth-web | grep -A8 "^Events:"
+
+make deploy ENV=prod
+kubectl -n prod get networkpolicy
+kubectl -n prod logs deployment/api-auth-web --tail=30 -f
+
