@@ -204,3 +204,23 @@ make deploy ENV=prod
 kubectl -n prod get networkpolicy
 kubectl -n prod logs deployment/api-auth-web --tail=30 -f
 
+kubectl -n prod get pods -l app=api-auth-web
+
+
+## Testing
+ALB=http://k8s-prod-companyw-e8ccf87b86-1395706170.us-east-1.elb.amazonaws.com
+for p in /api/health /employee/ /user/; do
+  printf "%-16s " "$p"
+  curl -s -m 10 -o /dev/null -w "%{http_code}  %{time_total}s\n" "$ALB$p" || echo FAILED
+done
+
+
+## Get all endpoint
+ALB=http://k8s-prod-companyw-e8ccf87b86-1395706170.us-east-1.elb.amazonaws.com
+echo "=== real api-core routes ==="
+for p in /api/learn/tracks /api/blog /api/resources /api/dashboard; do
+  printf "%-22s " "$p"; curl -s -m 8 -o /dev/null -w "%{http_code}\n" "$ALB$p"
+done
+echo "=== api-core pods ==="
+kubectl -n prod get pods -l app=api-core-web 2>/dev/null || echo "(no cluster access from here)"
+
