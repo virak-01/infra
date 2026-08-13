@@ -193,3 +193,7 @@ kubectl get nodes -w
 
 kubectl -n argocd get svc argocd-server \
   -o jsonpath='{.spec.type}{"\n"}{range .spec.ports[*]}{.name}{" "}{.port}{" -> nodePort "}{.nodePort}{"\n"}{end}'
+
+
+## Reload env config
+make app-config ENV=prod

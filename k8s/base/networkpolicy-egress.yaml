@@ -83,3 +83,64 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+---
+# Egress for the API services.
+#
+# Without this they are selected by deny-all-egress above and granted nothing —
+# not even DNS. The failure does not look like a firewall: TypeORM reports
+#
+#   Error: getaddrinfo EAI_AGAIN ep-...-pooler.<region>.aws.neon.tech
+#
+# which reads as a broken hostname or a DNS outage rather than a policy that
+# never let the query leave the pod.
+#
+# Separate from web-allow-egress rather than folded into it: the sites must not
+# be able to open 5432 to the internet, and these two must not inherit the
+# sites' in-cluster backend ports. Each selector grants only what its own
+# workload needs.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-allow-egress
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [api-auth-web, api-core-web]
+  policyTypes:
+    - Egress
+  egress:
+    # DNS, and it must come first in practice: every rule below is written
+    # against a hostname, so without name resolution none of them are reachable.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # PostgreSQL and HTTPS to the public internet, minus the metadata service.
+    #
+    # The database is Neon — managed, external, reached over TLS on 5432 — so
+    # this cannot be narrowed to a namespace or a Service. It is an ipBlock
+    # because Neon publishes no stable address to pin.
+    #
+    # 169.254.169.254 stays excluded. That exclusion is the entire point of the
+    # deny rule: it stops a compromised container reading the node's IAM role,
+    # and it matters more here than on the static sites, since these pods hold
+    # database credentials and JWT signing keys.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.169.254/32
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 443
