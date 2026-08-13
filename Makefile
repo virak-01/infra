@@ -6,7 +6,6 @@
 # k8s/overlays/<env>/kustomization.yaml. Nothing here needs Docker.
 
 ENV      ?= prod
-SITES    := employee user
 
 OVERLAY  := k8s/overlays/$(ENV)
 
@@ -60,9 +59,15 @@ current: ## Show what ENV's namespace is running, and which overlay it matches
 	@echo "context:   $$(kubectl config current-context)"
 	@echo "namespace: $(NS)"
 	@echo
-	@kubectl -n $(NS) get deploy -o \
+	@# Captured first, then tested. `kubectl get deploy ... || echo` never printed
+	@# the fallback: with no Deployments kubectl exits 0 and writes nothing to
+	@# stdout, so the `||` branch was unreachable and an empty namespace rendered
+	@# as blank output.
+	@out=$$(kubectl -n $(NS) get deploy -o \
 	  jsonpath='{range .items[*]}  {.metadata.name}{"  x"}{.spec.replicas}{"  "}{.spec.template.spec.containers[0].image}{"\n"}{end}' \
-	  2>/dev/null || echo "  (no deployments — nothing applied yet)"
+	  2>/dev/null); \
+	 if [ -n "$$out" ]; then printf '%s\n' "$$out"; \
+	 else echo "  (no deployments — nothing applied yet)"; fi
 	@echo
 	@# kubectl diff exits 0 only when the live state already equals the overlay.
 	@# Exit 1 means differences; anything higher is a real error, so it is not
@@ -120,7 +125,13 @@ app-config: ## Load k8s/overlays/$(ENV)/app-config.env into the cluster as a Con
 	  --from-env-file=$(OVERLAY)/app-config.env \
 	  --dry-run=client -o yaml | kubectl apply -f -
 	@echo "→ restarting so the new values are picked up"
-	@kubectl -n $(NS) rollout restart deploy/employee-web deploy/user-web 2>/dev/null || true
+	@# Every Deployment in the namespace, not a named pair. This used to name
+	@# employee-web and user-web only, so after api-auth and api-core were added
+	@# they kept running with the OLD config — and `2>/dev/null || true` hid it,
+	@# because a restart of a non-existent Deployment fails silently. Every
+	@# workload here consumes website-config via envFrom, so every one has to roll.
+	@kubectl -n $(NS) rollout restart deploy 2>/dev/null \
+	  || echo "  (no Deployments yet — they will read the ConfigMap on first start)"
 
 aws-creds: ## Store the IAM key the refresh job uses: make aws-creds AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...
 	@# Every line is @-prefixed: make echoes recipes by default, which would
@@ -160,7 +171,15 @@ ecr-secret: ## Mint the ECR pull Secret now, by running the refresh CronJob imme
 	       exit 1; }
 	@kubectl -n $(NS) get secret ecr-creds
 
-rollout: ## Wait for both Deployments to finish rolling out
-	@for site in $(SITES); do \
-	  kubectl -n $(NS) rollout status deployment/$$site-web || exit 1; \
-	done
+rollout: ## Wait for every Deployment in ENV to finish rolling out
+	@# Derived from the cluster, never from a list in this file. The previous
+	@# version looped over a hardcoded SITES=employee user, so once api-auth and
+	@# api-core existed it waited on two of four Deployments and reported success
+	@# while an API was still crash-looping. Any list here is a second copy of
+	@# k8s/base/kustomization.yaml's service list, and copies drift.
+	@deploys=$$(kubectl -n $(NS) get deploy -o name 2>/dev/null); \
+	 test -n "$$deploys" \
+	   || { echo "no Deployments in namespace $(NS) — run: make deploy ENV=$(ENV)"; exit 1; }; \
+	 for d in $$deploys; do \
+	   kubectl -n $(NS) rollout status $$d --timeout=180s || exit 1; \
+	 done

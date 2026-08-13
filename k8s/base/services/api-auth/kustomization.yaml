@@ -1,0 +1,31 @@
+# api-auth — one line in ../../kustomization.yaml switches this service
+# on or off, workload AND route together.
+#
+# A Component, not a Kustomization: components may patch resources the
+# PARENT owns, which is what lets this file append its own path to
+# ../../ingress.yaml. A plain `resources:` entry cannot reach it.
+#
+# Note what is NOT here: namePrefix, labels, images. A component's name
+# and label transformers apply to every resource accumulated so far —
+# including the parent's Ingress, Namespace and NetworkPolicies, which
+# would all be renamed. They stay scoped inside workload/ for that reason.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - workload
+
+patches:
+  - target:
+      kind: Ingress
+    patch: |
+      - op: add
+        path: /spec/rules/0/http/paths/-
+        value:
+          path: /api
+          pathType: Prefix
+          backend:
+            service:
+              name: api-auth-web
+              port:
+                number: 80

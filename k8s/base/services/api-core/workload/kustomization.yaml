@@ -1,0 +1,34 @@
+# The core API. Same shape as ../auth — a NestJS service on the shared ../web
+# template — and it shares the /api prefix with it, which the Ingress resolves
+# by routing each controller's subpath explicitly. See ../ingress.yaml.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../../web
+
+namePrefix: api-core-
+
+labels:
+  - pairs:
+      app: api-core-web
+    includeSelectors: true
+
+# Bare repository name; the overlay prepends the registry and pins the tag.
+images:
+  - name: web
+    newName: core
+
+patches:
+  - path: patch-probes.yaml
+
+  # The ALB reaches this Service through its own target group and node port,
+  # NOT through the Ingress path rules — so this health check works even though
+  # /api/health is routed to api-auth-web at the edge.
+  - target:
+      kind: Service
+    patch: |
+      - op: add
+        path: /metadata/annotations
+        value:
+          alb.ingress.kubernetes.io/healthcheck-path: /api/health

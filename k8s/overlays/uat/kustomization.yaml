@@ -31,6 +31,7 @@ namespace: uat
 # user-web repositories do not exist in ECR yet. Two entries rather than one
 # because the base still renders two distinct names — that is what lets them be
 # split apart again later without touching anything else.
+
 images:
   - name: employee-web
     newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/website
@@ -38,23 +39,43 @@ images:
   - name: user-web
     newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/website
     newTag: staging-9ed42421
+  - name: auth
+    newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/auth
+    newTag: v1.0.10
+  - name: core
+    newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/core
+    newTag: v1.0.01
 
 # One replica is enough to serve UAT traffic — and it also keeps the two
 # environments inside one node's memory budget. Declared here rather than
 # patched into the base, so the two overlays can be read side by side and the
 # difference is obvious.
-replicas:
-  - name: employee-web
-    count: 1
-  - name: user-web
-    count: 1
+# Replica count is a PATCH, not the `replicas:` transformer, and the target is
+# every Deployment rather than a list of names.
+#
+# `replicas:` names each workload, and a name matching nothing is a hard error
+# ("resource with name user-web does not match a config with the following
+# GVK") — unlike `images:`, which skips silently. That would make commenting a
+# service out of k8s/base/kustomization.yaml break this file too, defeating the
+# one-line switch. Targeting the kind keeps this overlay ignorant of which
+# services exist.
+#
+# The cost: every service in UAT scales identically. Add a name: to a second
+# patch if one ever needs its own count.
 
 # ONE `patches:` key for the whole file. A second one does not merge and does
 # not error — kustomize takes the last and silently discards the first, so the
 # patch you thought you added is simply gone from the render. Add new patches
 # as list items here.
 patches:
-  # UAT scales lower than prod. minReplicas must not exceed the `replicas`
+  - target:
+      kind: Deployment
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 1
+
+  # UAT scales lower than prod. minReplicas must not exceed the replica count
   # above, or the HPA immediately scales the Deployment up and the declared
   # replica count becomes a lie.
   - target:
@@ -75,6 +96,9 @@ patches:
   # Placeholder host — set it to a domain you control before this means
   # anything. No node IP belongs in this file: it is public, it is in git, and
   # it changes every time the instance restarts without an Elastic IP.
+  # One rule, one host. The API shares rule 0 with the two sites, so this single
+  # host covers /employee, /user and /api in UAT — there is no rules/1 to patch,
+  # and a `replace` against one would fail the render outright.
   - target:
       kind: Ingress
     patch: |

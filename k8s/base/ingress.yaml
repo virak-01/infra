@@ -19,19 +19,18 @@ metadata:
 spec:
   ingressClassName: alb
   rules:
+    # Deliberately empty. Every path is appended by the service component that
+    # owns it (services/<name>/kustomization.yaml), so a service and its route
+    # are switched on by the same single line and can never drift apart — no
+    # path pointing at a Service that is no longer deployed.
+    #
+    # Order here does not decide matching: the Ingress spec awards a request to
+    # the LONGEST matching path, so /api/learn beats api-auth's /api catch-all
+    # regardless of which component ran first.
+    #
+    # Rendering with every service commented out produces an Ingress with zero
+    # paths, which the API server rejects. That is the intended failure — an
+    # Ingress routing nothing is not a state worth deploying.
     - http:
         paths:
-          - path: /employee
-            pathType: Prefix
-            backend:
-              service:
-                name: employee-web
-                port:
-                  number: 80
-          - path: /user
-            pathType: Prefix
-            backend:
-              service:
-                name: user-web
-                port:
-                  number: 80
+          []

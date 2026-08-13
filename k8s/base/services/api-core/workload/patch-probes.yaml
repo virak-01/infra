@@ -1,0 +1,34 @@
+# Everything that makes this workload an API rather than a rendered site.
+#
+# Targets the pre-namePrefix name (`web`) and the template's container name
+# (`nginx`), because patches apply while the resource still carries the shared
+# template's identity — the namePrefix transformer runs afterwards.
+#
+# UID 1000, not the template's 1001: this image ends with `USER node`, which on
+# node:22-alpine is 1000, and it copies its files with --chown=node:node. Left
+# at 1001 the process owns none of its own files — it starts, because they are
+# world-readable, then fails the first time anything writes. All three of
+# runAsUser/runAsGroup/fsGroup have to move together or the group half of the
+# mismatch survives.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: nginx
+          startupProbe:
+            httpGet:
+              path: /api/health
+          readinessProbe:
+            httpGet:
+              path: /api/health
+          livenessProbe:
+            httpGet:
+              path: /api/health

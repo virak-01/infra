@@ -1,0 +1,36 @@
+# The auth service. Mirror of ../employee and ../user in structure, but the
+# workload behind it is a NestJS API rather than a rendered site — see
+# patch-probes.yaml for the three things that differ because of it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../../web
+
+# `web` -> `api-auth-web`, matching the sibling convention. The Ingress in
+# ../ingress.yaml refers to that final name.
+namePrefix: api-auth-
+
+labels:
+  - pairs:
+      app: api-auth-web
+    includeSelectors: true
+
+# Bare repository name; the overlay prepends the registry and pins the tag.
+images:
+  - name: web
+    newName: auth
+
+patches:
+  - path: patch-probes.yaml
+
+  # This service's ALB health check. Service-level annotations beat the
+  # Ingress-level default, which is what lets three backends behind one Ingress
+  # each check their own path — /employee/ would 404 here.
+  - target:
+      kind: Service
+    patch: |
+      - op: add
+        path: /metadata/annotations
+        value:
+          alb.ingress.kubernetes.io/healthcheck-path: /api/health

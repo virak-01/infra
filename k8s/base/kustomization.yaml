@@ -18,13 +18,35 @@ kind: Kustomization
 
 resources:
   - namespace.yaml
-  - employee
-  - user
   - ingress.yaml
   - networkpolicy-egress.yaml
   - networkpolicy-ingress.yaml
   # Drop this line on EKS — the node role supplies pull credentials there.
   - ecr-credentials.yaml
+
+# THE SERVICE LIST. One line per service, and the only place a service is
+# switched on or off — comment a line and its Deployment, Service, HPA, PDB and
+# its Ingress path all disappear together. Adding one is the mirror image:
+# copy a directory under services/ and add it here.
+#
+# These are components rather than resources because only a component can patch
+# a resource the parent owns, which is how each service appends its own path to
+# ingress.yaml. That coupling is the point: a route can never outlive the
+# workload it points at.
+#
+# Removing a line stops the resource being RENDERED; it does not delete what is
+# already running. `kubectl apply` never prunes. Follow with either
+#   argocd app sync <env> --prune
+# or `kubectl -n <env> delete deploy,svc,hpa,pdb -l app=<service>`.
+components:
+  - services/employee
+  - services/user
+  # api-core before api-auth: api-auth claims the broad /api prefix, and listing
+  # it last leaves it at the end of the rendered path list where a catch-all
+  # belongs. Matching does not depend on this — the longest path wins either
+  # way — but a reader should not have to know that to trust the file.
+  - services/api-core
+  - services/api-auth
 
 # Provenance labels only. includeSelectors is false — and must stay false:
 # these keys would otherwise land in the Deployments' immutable selectors and

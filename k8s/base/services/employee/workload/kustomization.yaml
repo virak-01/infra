@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../../web
+
+namePrefix: employee-
+
+labels:
+  - pairs:
+      app: employee-web
+    includeSelectors: true
+
+images:
+  - name: web
+    newName: employee-web
+
+patches:
+  - path: patch-probes.yaml
+
+  - target:
+      kind: Service
+    patch: |
+      - op: add
+        path: /metadata/annotations
+        value:
+          alb.ingress.kubernetes.io/healthcheck-path: /employee/

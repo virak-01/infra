@@ -1,38 +1,9 @@
-# Production. What Argo CD syncs (see argocd/application-prod.yaml).
-#
-# Shares a cluster with ../uat and is separated from it by namespace, so every
-# resource name is identical to UAT's — the tag, the replica count and the
-# Ingress host are the whole difference.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
   - ../../base
-
-# NO ingress-nginx component here: this environment is served by the ALB the
-# base's `alb` ingressClassName builds, so the base is used as-is. Re-add
-#
-#   components:
-#     - ../../components/ingress-nginx
-#
-# to fall back to the in-cluster ingress-nginx controller instead. The two are
-# mutually exclusive — the component flips the class to `nginx` and strips the
-# ALB annotations.
-
-# The environment. This is the only place it is declared: the base deliberately
-# sets no namespace, so this value both stamps every resource below and renames
-# the base's Namespace object to `prod`.
 namespace: prod
-
-# The release. Bumping a tag here is the deploy — the single line a rollout
-# changes, and the single line to revert.
-#
-# Avoid reusing a tag: nodes may keep the old cached layer, so the same tag can
-# mean two different images across the fleet.
-# `name` matches what the base rendered (`employee-web`, not the original
-# `web`); newName prepends this environment's registry and newTag pins the
-# release. A `name` that matches nothing is not an error — kustomize skips the
-# entry and the image renders untagged, i.e. :latest.
 images:
   - name: employee-web
     newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/website
@@ -40,33 +11,44 @@ images:
   - name: user-web
     newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/website
     newTag: staging-332218de
+  - name: auth
+    newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/auth
+    newTag: v1.0.10
+  - name: core
+    newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/core
+    newTag: v1.0.01
 
-# Stated explicitly even though it matches the base default, so that reading
-# this file beside ../uat/kustomization.yaml shows the whole difference
-# between the environments without having to open the base.
-#
-# Four pods here plus UAT's two is ~1.5Gi of memory requests before k3s and
-# ingress-nginx take their share — more than a 2Gi node can schedule. Drop
-# these to 1 if both environments share a t3.small.
-replicas:
-  - name: employee-web
-    count: 2
-  - name: user-web
-    count: 2
+patches:
+  # The default: everything runs two pods in prod.
+  - target:
+      kind: Deployment
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 2
 
-# No Ingress patch here on purpose: prod keeps the base's hostless rule and is
-# therefore the CATCH-ALL for this ingress class. Any request whose Host header
-# matches no other Ingress lands here, which is what makes all of these work
-# without a single DNS record:
-#
-#   http://<node-ip>:<nodeport>/employee        bare IP
-#   http://api.<node-ip>.nip.io:<nodeport>/employee
-#   http://anything-else:<nodeport>/employee
-#
-# ../uat is the only overlay that claims a host, so it is the only traffic
-# carved out of this. Exactly one hostless Ingress per class is safe; two would
-# collide, with the path going to whichever object was created first, silently.
-#
-# The cost of being the catch-all: a typo'd or unknown hostname reaches PROD
-# rather than erroring. Give prod its own explicit host once real DNS exists,
-# and let something harmless be the default instead.
+  # needs a different replica count.
+  - target:
+      kind: Deployment
+      name: api-core-web
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 1
+
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: api-core-web
+    patch: |
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+  - target:
+      kind: PodDisruptionBudget
+      name: api-core-web
+    patch: |
+      - op: remove
+        path: /spec/minAvailable
+      - op: add
+        path: /spec/maxUnavailable
+        value: 1
