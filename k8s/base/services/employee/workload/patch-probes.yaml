@@ -4,16 +4,15 @@
 # true in every environment. Overlays carry only what differs between
 # environments: image tag and replica count.
 #
-# The base path appears twice on purpose, and the two must agree:
-#   NUXT_APP_BASE_URL   tells the app where it is mounted, so it serves under
-#                       that prefix AND emits asset URLs with it
-#                       (/employee/_nuxt/...). Without it the app serves at /
-#                       and every asset 404s through the Ingress.
-#   probe paths         under a base path, / is a 404 — a probe on / would fail
-#                       readiness forever.
+# This is the ROOT site: it answers on / rather than under a prefix.
 #
-# Both must also match the Ingress path for this site. The Ingress does not
-# rewrite, so the prefix arrives at the app intact.
+# NUXT_APP_BASE_URL is still set explicitly. / is Nuxt's default, but stating it
+# keeps this file the single place the mount point is declared — and it must
+# agree with the Ingress path in ../kustomization.yaml and the healthcheck paths
+# in ./kustomization.yaml, because the Ingress does not rewrite: whatever prefix
+# the ALB matched arrives at the app intact.
+#
+# ../user is the counter-example — it keeps /user/ and shows the prefixed shape.
 #
 # Targets the pre-namePrefix name (`web`): patches apply while the resource
 # still carries the template's name, before namePrefix runs.
@@ -28,13 +27,13 @@ spec:
         - name: nginx
           env:
             - name: NUXT_APP_BASE_URL
-              value: /employee/
+              value: /
           startupProbe:
             httpGet:
-              path: /employee/
+              path: /
           readinessProbe:
             httpGet:
-              path: /employee/
+              path: /
           livenessProbe:
             httpGet:
-              path: /employee/
+              path: /

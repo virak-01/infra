@@ -38,15 +38,21 @@ resources:
 # already running. `kubectl apply` never prunes. Follow with either
 #   argocd app sync <env> --prune
 # or `kubectl -n <env> delete deploy,svc,hpa,pdb -l app=<service>`.
+# ORDER: broadest last, within a rule. api-core owns /api and api-auth owns the
+# longer /api/auth and /api/health beneath it — all three on rules[1].
+#
+# employee is the exception and its position here changes nothing: it patches
+# rules[0], a different rule, so its bare / never shares a path list with /api.
+# What keeps those two apart is the HOST — rules[0] is the site, rules[1] is the
+# API. While the overlay host patches are commented out both rules are hostless
+# and / is a catch-all in front of everything, which is safe only because the
+# ALB controller orders listener rules by path specificity. Enabling the hosts
+# removes the reliance on that entirely.
 components:
-  - services/employee
-  - services/user
-  # api-core before api-auth: api-auth claims the broad /api prefix, and listing
-  # it last leaves it at the end of the rendered path list where a catch-all
-  # belongs. Matching does not depend on this — the longest path wins either
-  # way — but a reader should not have to know that to trust the file.
+  # - services/user
   - services/api-core
   - services/api-auth
+  - services/employee
 
 # Provenance labels only. includeSelectors is false — and must stay false:
 # these keys would otherwise land in the Deployments' immutable selectors and

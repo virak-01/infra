@@ -24,4 +24,4 @@ patches:
       - op: add
         path: /metadata/annotations
         value:
-          alb.ingress.kubernetes.io/healthcheck-path: /employee/
+          alb.ingress.kubernetes.io/healthcheck-path: /

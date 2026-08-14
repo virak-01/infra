@@ -19,10 +19,18 @@ patches:
   - target:
       kind: Ingress
     patch: |
+      # The ROOT site. `/` as a Prefix matches every request on this host,
+      # including /user and anything a future service claims — it is safe only
+      # because the ALB controller orders listener rules by path specificity,
+      # not by the order paths appear here. /user (5 chars) and /api (4) both
+      # beat / (1), so this acts as the fallback rather than a black hole.
+      #
+      # A service mounted at root must therefore be the LAST resort on its
+      # host. Only one service per host can hold /.
       - op: add
         path: /spec/rules/0/http/paths/-
         value:
-          path: /employee
+          path: /
           pathType: Prefix
           backend:
             service:

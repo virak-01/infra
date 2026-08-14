@@ -20,11 +20,11 @@ metadata:
     # host-based auto-discovery, which has nothing to match while the overlay
     # hosts are commented out.
     alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:043309361013:certificate/43fc6440-d2d6-4b46-b86d-bafab7378765
-    # Fallback only. One target group is created per backend Service, and each
-    # site serves under its own subpath — so /employee is a 404 on user-web.
-    # Each Service carries its own healthcheck-path annotation, which takes
-    # priority over this one; see k8s/base/employee/kustomization.yaml.
-    alb.ingress.kubernetes.io/healthcheck-path: /employee/
+    # Fallback only, and every Service overrides it — each one mounts at its own
+    # base path, so no single path is healthy on all of them (/user is a 404 on
+    # employee-web). Per-Service annotations win; see the workload/ directory of
+    # each service under services/.
+    alb.ingress.kubernetes.io/healthcheck-path: /
 spec:
   ingressClassName: alb
   rules:
