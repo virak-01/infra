@@ -19,50 +19,26 @@ patches:
   - target:
       kind: Ingress
     patch: |
+      # ONE rule for every route this service owns.
+      #
+      # `pathType: Prefix` on /api already matches /api/learn, /api/blog and
+      # anything added later — Kubernetes has no wildcard syntax and needs none.
+      # Listing each controller separately meant a new controller in api-ops was
+      # unreachable until someone remembered to add a line here.
+      #
+      # This is the CATCH-ALL for the api host, and it coexists with api-auth's
+      # /api/auth and /api/health on the same rule because the Ingress spec
+      # awards a request to the LONGEST matching path. /api/auth (9 chars) beats
+      # /api (4), so auth keeps its traffic and everything else lands here.
+      #
+      # The consequence, and it is the reverse of the old arrangement: a NEW
+      # api-auth route is NOT automatically routed — it falls here and 404s from
+      # api-core. New auth routes need a line in ../api-auth; new core routes
+      # need nothing.
       - op: add
-        path: /spec/rules/0/http/paths/-
+        path: /spec/rules/1/http/paths/-
         value:
-          path: /api/learn
-          pathType: Prefix
-          backend:
-            service:
-              name: api-core-web
-              port:
-                number: 80
-      - op: add
-        path: /spec/rules/0/http/paths/-
-        value:
-          path: /api/resources
-          pathType: Prefix
-          backend:
-            service:
-              name: api-core-web
-              port:
-                number: 80
-      - op: add
-        path: /spec/rules/0/http/paths/-
-        value:
-          path: /api/playbooks
-          pathType: Prefix
-          backend:
-            service:
-              name: api-core-web
-              port:
-                number: 80
-      - op: add
-        path: /spec/rules/0/http/paths/-
-        value:
-          path: /api/blog
-          pathType: Prefix
-          backend:
-            service:
-              name: api-core-web
-              port:
-                number: 80
-      - op: add
-        path: /spec/rules/0/http/paths/-
-        value:
-          path: /api/dashboard
+          path: /api
           pathType: Prefix
           backend:
             service:

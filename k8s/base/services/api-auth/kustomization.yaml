@@ -20,7 +20,7 @@ patches:
       kind: Ingress
     patch: |
       - op: add
-        path: /spec/rules/0/http/paths/-
+        path: /spec/rules/1/http/paths/-
         value:
           path: /api/auth
           pathType: Prefix
@@ -30,7 +30,7 @@ patches:
               port:
                 number: 80
       - op: add
-        path: /spec/rules/0/http/paths/-
+        path: /spec/rules/1/http/paths/-
         value:
           path: /api/health
           pathType: Prefix

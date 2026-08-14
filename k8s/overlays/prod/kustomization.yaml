@@ -19,6 +19,29 @@ images:
     newTag: v1.0.01
 
 patches:
+  # The two production hostnames. Both are Route 53 ALIAS records pointing at
+  # the ALB the Ingress builds.
+  #
+  # ALIAS and not CNAME for the apex: DNS forbids a CNAME on a zone apex, and
+  # ALIAS is the AWS-specific way around it. The api. record can be either;
+  # keeping both as ALIAS means neither breaks if they are ever swapped.
+  #
+  # `add` because k8s/base/ingress.yaml leaves both rules hostless. Once a host
+  # is set, prod stops being the catch-all — a request arriving with any other
+  # Host header, including the raw ALB hostname, matches no rule and gets a bare
+  # 404 from the load balancer. That is the point (it is what separates prod
+  # from uat on a shared cluster), but it does mean the ALB address stops
+  # working for testing, so set these only once DNS resolves.
+  - target:
+      kind: Ingress
+    patch: |
+      - op: add
+        path: /spec/rules/0/host
+        value: devops-selft-learning.xyz
+      - op: add
+        path: /spec/rules/1/host
+        value: api.devops-selft-learning.xyz
+
   # The default: everything runs two pods in prod.
   - target:
       kind: Deployment

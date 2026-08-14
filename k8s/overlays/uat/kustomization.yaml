@@ -88,20 +88,22 @@ patches:
         path: /spec/maxReplicas
         value: 3
 
-  # The one field that MUST differ from prod, and the only host claimed in the
-  # whole cluster. ../prod stays hostless and is therefore the catch-all, so
-  # this line is the entire boundary between the two environments: this exact
-  # hostname reaches UAT, everything else reaches prod.
+  # Both hosts, and both are mandatory now that ../prod claims hostnames of its
+  # own. Neither environment is the catch-all any more, so a rule left hostless
+  # here would answer for every unmatched Host header in the cluster — including
+  # requests meant for prod — and nothing would log it.
   #
-  # Placeholder host — set it to a domain you control before this means
-  # anything. No node IP belongs in this file: it is public, it is in git, and
-  # it changes every time the instance restarts without an Elastic IP.
-  # One rule, one host. The API shares rule 0 with the two sites, so this single
-  # host covers /employee, /user and /api in UAT — there is no rules/1 to patch,
-  # and a `replace` against one would fail the render outright.
+  # These must also differ from prod's. uat and prod share one cluster, and two
+  # Ingresses claiming the same host are resolved by whichever object was
+  # created first, silently.
+  #
+  # Both need Route 53 records pointing at the same ALB.
   - target:
       kind: Ingress
     patch: |
       - op: add
         path: /spec/rules/0/host
-        value: uat.api.example.com
+        value: uat.devops-selft-learning.xyz
+      - op: add
+        path: /spec/rules/1/host
+        value: uat-api.devops-selft-learning.xyz

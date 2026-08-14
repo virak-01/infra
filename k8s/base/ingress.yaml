@@ -19,18 +19,34 @@ metadata:
 spec:
   ingressClassName: alb
   rules:
-    # Deliberately empty. Every path is appended by the service component that
-    # owns it (services/<name>/kustomization.yaml), so a service and its route
-    # are switched on by the same single line and can never drift apart — no
-    # path pointing at a Service that is no longer deployed.
+    # TWO RULES, AND THEIR ORDER IS AN API.
     #
-    # Order here does not decide matching: the Ingress spec awards a request to
-    # the LONGEST matching path, so /api/learn beats api-auth's /api catch-all
-    # regardless of which component ran first.
+    # Both start with no paths and no host. Each service component appends its
+    # own path to the rule that matches its hostname, and each overlay sets the
+    # two hosts — so a service and its route are still switched on by one line
+    # in ../kustomization.yaml.
     #
-    # Rendering with every service commented out produces an Ingress with zero
-    # paths, which the API server rejects. That is the intended failure — an
-    # Ingress routing nothing is not a state worth deploying.
+    #   rules[0]  the browser-facing sites   /employee  /user
+    #   rules[1]  the APIs                   /api/*
+    #
+    # The index is referenced by name in three other places: both service
+    # components patch `/spec/rules/<n>/http/paths/-`, each overlay patches
+    # `/spec/rules/<n>/host`, and `make deploy HOST=` patches rules/0/host.
+    # Inserting a rule rather than appending one silently re-points all of them.
+    #
+    # Splitting the APIs onto their own host is what allows them to keep their
+    # natural paths: /api/auth is unambiguous under api.<domain>, where under a
+    # single host it had to coexist with every other service's /api/*.
+    #
+    # Hosts live in the overlays, not here. uat and prod share one cluster, so
+    # an identical host in both would be claimed by whichever Ingress was
+    # created first — silently, with no error on either object.
+    #
+    # A rule that renders with zero paths is rejected by the API server. That is
+    # the intended failure: an Ingress routing nothing is not worth deploying.
+    - http:
+        paths:
+          []
     - http:
         paths:
           []
