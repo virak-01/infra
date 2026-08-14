@@ -1,13 +1,29 @@
-# Scales on CPU, which is the binding resource for server-side rendering.
+# Scales on CPU and memory, both at 70% of the request.
 #
 # REQUIRES metrics-server in the cluster. Without it the HPA reports
 # <unknown>/70% and never scales — it will not scale to zero, so the
 # Deployment's replicas: 2 remains the floor. Install it before relying on this:
 #   kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
 #
-# 70% of the 200m CPU request, so a pod is considered saturated around 140m and
-# a second one is added before latency degrades. Overlays patch minReplicas and
-# maxReplicas per environment.
+# TWO METRICS IS OR, NOT AND. The HPA computes a replica count from each metric
+# independently and takes the HIGHEST. Either resource crossing 70% scales up;
+# scaling down needs BOTH below it. Thresholds are against the REQUEST in
+# ../web/deployment.yaml, not the limit:
+#
+#   cpu     70% of 200m   = 140m
+#   memory  70% of 256Mi  = 179Mi
+#
+# Overlays patch minReplicas and maxReplicas per environment.
+#
+# CHECK BASELINE MEMORY BEFORE TRUSTING THIS — `kubectl -n prod top pods`.
+# Node holds heap it has already allocated rather than returning it to the OS,
+# so a Nitro process settles at a high-water mark and stays there. Two things
+# follow. If idle usage is already near 179Mi the HPA pins at maxReplicas
+# permanently, and scale-down effectively stops working because memory never
+# falls back below the threshold even when traffic does.
+#
+# If that happens, raise the memory REQUEST rather than the target percentage —
+# it fixes the HPA and gives the scheduler an honest number at the same time.
 #
 # scaleDown is deliberately slow: SSR traffic is spiky, and the default 5-minute
 # window still removes capacity fast enough to cause a second scale-up moments

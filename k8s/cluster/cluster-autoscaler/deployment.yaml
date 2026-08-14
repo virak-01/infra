@@ -1,0 +1,120 @@
+# Cluster Autoscaler — adds and removes NODES. The HPAs in k8s/base/web scale
+# pods; this scales what the pods land on. It reacts to one signal only: pods
+# stuck in Pending because no node can fit them. If nothing is ever Pending it
+# will never scale up, no matter how loaded the nodes are.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cluster-autoscaler
+  namespace: kube-system
+  labels:
+    app: cluster-autoscaler
+spec:
+  # Exactly one. Two would both call SetDesiredCapacity and fight; the lease in
+  # rbac.yaml exists to make a second replica fail over rather than run.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cluster-autoscaler
+  template:
+    metadata:
+      labels:
+        app: cluster-autoscaler
+      annotations:
+        # Stops the autoscaler from draining the node it is itself running on
+        # and killing the process mid-scale-down.
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+    spec:
+      serviceAccountName: cluster-autoscaler
+      priorityClassName: system-cluster-critical
+
+      # Pinned to the control plane, which is NOT a member of the ASG. On a
+      # worker it could be evicted by its own scale-down decision, and the
+      # scale-down would then be left half-finished.
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: cluster-autoscaler
+          # MUST match your control plane's MINOR version. CA v1.31 speaks to a
+          # 1.31 API server; a mismatch fails in subtle ways rather than loudly.
+          #   kubectl version -o json | jq -r .serverVersion.gitVersion
+          # Then pick the matching tag from
+          #   github.com/kubernetes/autoscaler/releases
+          image: registry.k8s.io/autoscaling/cluster-autoscaler:v1.31.1
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - ./cluster-autoscaler
+            - --cloud-provider=aws
+            - --namespace=kube-system
+            - --v=4
+            - --stderrthreshold=info
+
+            # THE SCALING BOUNDS: min:max:asg-name.
+            #
+            # 2 and 6 must also be the ASG's MinSize and MaxSize — the ASG is
+            # the hard limit and CA cannot exceed it, so a mismatch means this
+            # line silently does less than it says. docs/autoscaling.md creates
+            # the group with exactly these numbers.
+            #
+            # Stated explicitly rather than via --node-group-auto-discovery
+            # because there is one node group and the bounds belong in git,
+            # where a review can see them, not in a console tag.
+            - --nodes=2:6:k8s-learning-workers
+
+            # Scale-down. Conservative on purpose: removing a node is far more
+            # disruptive than adding one, and an over-eager setting produces
+            # thrash where a node is removed and immediately re-added.
+            - --scale-down-enabled=true
+            - --scale-down-unneeded-time=10m
+            - --scale-down-delay-after-add=10m
+            - --scale-down-utilization-threshold=0.5
+
+            # Without this a node running ANY kube-system pod that is not part
+            # of a DaemonSet is never removed — on kubeadm that is most nodes,
+            # and scale-down would effectively never happen. The risk it buys:
+            # CA may evict such a pod. Acceptable here because nothing in
+            # kube-system holds state; revisit if that changes.
+            - --skip-nodes-with-system-pods=false
+
+            # Same idea for emptyDir. The web pods use one for Nitro's temp
+            # writes, so leaving this true would pin every node they touch.
+            - --skip-nodes-with-local-storage=false
+
+            # Of the possible node groups, choose the one leaving least idle
+            # CPU/memory. With a single group it changes nothing — it is here
+            # so behaviour does not shift when a second group is added.
+            - --expander=least-waste
+
+          env:
+            - name: AWS_REGION
+              value: us-east-1
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 300Mi
+            limits:
+              memory: 500Mi
+
+          ports:
+            - name: metrics
+              containerPort: 8085
+
+          livenessProbe:
+            httpGet:
+              path: /health-check
+              port: 8085
+            initialDelaySeconds: 30
+            periodSeconds: 10

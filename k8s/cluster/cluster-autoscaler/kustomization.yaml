@@ -1,0 +1,20 @@
+# Cluster-scoped add-on, applied ONCE per cluster:
+#
+#   kubectl apply -k k8s/cluster/cluster-autoscaler
+#
+# Deliberately not under k8s/base. Everything there is rendered by both
+# overlays, which stamp `namespace: prod` / `namespace: uat` onto it — that
+# would produce two Cluster Autoscalers, both driving the same ASG in opposite
+# directions. This targets kube-system and there is exactly one of it, the same
+# reasoning that keeps argocd/ outside the synced path.
+#
+# It has AWS prerequisites that must exist first, or the pod runs and scales
+# nothing: an Auto Scaling Group named k8s-learning-workers with MinSize 2 and
+# MaxSize 6, an IAM policy on the node instance profile, and a launch template
+# whose instances actually join the cluster. See docs/autoscaling.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - rbac.yaml
+  - deployment.yaml
