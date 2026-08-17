@@ -1,0 +1,23 @@
+# AWS CLUSTER ADD-ONS — applied ONCE per cluster, not once per environment:
+#
+#   make cluster CLOUD=aws          (CLOUD defaults to aws)
+#   kubectl apply -k k8s/cluster/aws
+#
+# The directory name is the contract: `make cluster` applies k8s/cluster/$(CLOUD)
+# and skips with a notice when no such directory exists, so a cluster on another
+# cloud is never handed AWS controllers. Adding a cloud means adding a sibling
+# directory here — nothing in the Makefile changes.
+#
+# Why these are not in k8s/base or a component: everything there is rendered by
+# BOTH overlays, which stamp `namespace: prod` and `namespace: uat` onto it.
+# That would produce two Cluster Autoscalers driving the same ASG in opposite
+# directions. These target kube-system and there is exactly one of them — the
+# same reasoning that keeps argocd/ outside the synced path.
+#
+# Argo CD does not sync this directory either. It is applied by hand, once, when
+# the cluster is built.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - cluster-autoscaler

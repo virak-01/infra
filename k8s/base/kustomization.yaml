@@ -16,13 +16,16 @@ kind: Kustomization
 # every resource below AND uses to rename namespace.yaml's Namespace object, so
 # one file serves both environments.
 
+# Cloud-neutral. Nothing below names a cloud, a registry or an ingress
+# controller — the overlay adds one of ../components/aws or
+# ../components/ingress-nginx, and that component contributes the load-balancer
+# annotations, the Service type and any registry-credential machinery.
+# ecr-credentials.yaml used to live here and now sits in components/aws/.
 resources:
   - namespace.yaml
   - ingress.yaml
   - networkpolicy-egress.yaml
   - networkpolicy-ingress.yaml
-  # Drop this line on EKS — the node role supplies pull credentials there.
-  - ecr-credentials.yaml
 
 # THE SERVICE LIST. One line per service, and the only place a service is
 # switched on or off — comment a line and its Deployment, Service, HPA, PDB and

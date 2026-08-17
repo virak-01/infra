@@ -1,18 +1,36 @@
+# THE INGRESS-NGINX EDGE — the portable alternative to ../aws.
+#
+# ingress-nginx runs inside the cluster and is reached through its own Service,
+# so this works anywhere: kubeadm, k3s, kind, GKE, AKS. Pick exactly one edge
+# component per overlay.
+#
+#   overlays/<env>/kustomization.yaml:
+#     components:
+#       - ../../components/ingress-nginx
+#
+# One line, because base is already cloud-neutral: it carries the routes and no
+# class, and this names the controller that claims them. This file used to
+# additionally strip four alb.ingress.kubernetes.io annotations that base set —
+# it no longer has to, since those moved to ../aws where they belong.
+#
+# Services stay ClusterIP (base's default), which is what ingress-nginx wants:
+# it proxies to pod endpoints directly and has no use for a node port.
+#
+# NOT INCLUDED: installing the controller itself. That is a cluster-scoped
+# add-on, one per cluster rather than one per environment — see docs/deployment.md.
+#
+# The per-Service `alb.ingress.kubernetes.io/healthcheck-path` annotations from
+# base/services/*/workload/ do still render here. ingress-nginx ignores
+# annotations under a prefix it does not own, so they are inert rather than
+# harmful; probes on the pods are what determine health on this path.
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 
 patches:
   - target:
       kind: Ingress
+      name: company-web
     patch: |
-      - op: remove
-        path: /metadata/annotations/alb.ingress.kubernetes.io~1scheme
-      - op: remove
-        path: /metadata/annotations/alb.ingress.kubernetes.io~1target-type
-      - op: remove
-        path: /metadata/annotations/alb.ingress.kubernetes.io~1listen-ports
-      - op: remove
-        path: /metadata/annotations/alb.ingress.kubernetes.io~1healthcheck-path
-      - op: replace
+      - op: add
         path: /spec/ingressClassName
         value: nginx

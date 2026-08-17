@@ -21,8 +21,9 @@ must be able to authenticate before any pod starts (see below):
 
 | Image | Serves |
 |---|---|
-| `043309361013.dkr.ecr.us-east-1.amazonaws.com/employee-web` | `/employee` |
-| `043309361013.dkr.ecr.us-east-1.amazonaws.com/user-web` | `/user` |
+| `<acct>.dkr.ecr.<region>.amazonaws.com/website` | `/` (the employee site) |
+| `<acct>.dkr.ecr.<region>.amazonaws.com/core` | `/api` |
+| `<acct>.dkr.ecr.<region>.amazonaws.com/auth` | `/api/auth`, `/api/health` |
 
 Check what tags exist before pinning one:
 
@@ -32,9 +33,9 @@ aws ecr describe-images --region us-east-1 \
   --query 'reverse(sort_by(imageDetails,&imagePushedAt))[].imageTags' --output text
 ```
 
-Each image serves its files under a matching subpath
-(`/usr/share/nginx/html/employee/`), which is why the Ingress needs no rewrite
-rules and relative links to `style.css` resolve.
+Each service serves its own base path, which is why the Ingress needs no rewrite
+rules. The site is a Nuxt/Nitro Node server listening on 3000, not nginx serving
+static files — the resource sizing in `deployment.yaml` follows from that.
 
 ### ECR pull credentials
 
@@ -42,10 +43,15 @@ The image name lives in `k8s/base/<site>/kustomization.yaml` and the tag in the
 overlay. Both already point at ECR; the part that is **not** in this repo is how
 a node proves it may pull. Pick one, by cluster:
 
-**EKS — grant the node role, add nothing to the manifests.** Attach
+**EKS — grant the node role, and drop the `registry-ecr` component.** Attach
 `AmazonEC2ContainerRegistryReadOnly` to the node group's IAM role. The kubelet's
 built-in ECR credential provider mints a token per pull, so nothing expires and
-no Secret exists to go stale. This is why the pod spec has no `imagePullSecrets`.
+no Secret exists to go stale.
+
+The pod spec *does* still declare `imagePullSecrets: [ecr-creds]`, and that is
+harmless on EKS: a missing pull Secret only logs an event, and the node
+credentials satisfy the pull regardless. Nothing needs removing from the
+Deployment.
 
 **k3s or any non-AWS cluster — a docker-registry Secret.** No ECR credential
 provider exists there, so the credentials must be stored:
@@ -81,7 +87,7 @@ load balancer is provisioned:
 ```sh
 kubectl -n uat get ingress company-web \
   -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
-# -> http://<hostname>/employee   and   http://<hostname>/user
+# -> http://<hostname>/  http://<hostname>/api  http://<hostname>/api/health
 ```
 
 > **`apply -k` is one shot.** The old `kubectl apply -f` sequence let you stage
@@ -91,11 +97,13 @@ kubectl -n uat get ingress company-web \
 
 ## The ingress controller
 
-The Ingress targets the community **ingress-nginx** controller
-(`ingressClassName: nginx`), which has to be installed in the cluster. An
-Ingress whose class has no controller is accepted by the API server and then
-silently ignored — it just sits there with an empty `ADDRESS`, which is the
-usual reason "the Ingress applied fine but nothing works".
+Base sets **no** `ingressClassName`; the overlay's edge component does, and both
+overlays currently choose `alb` (see [below](#ingress-nginx-instead)). The
+section that follows covers the ingress-nginx alternative, which has to be
+installed in the cluster. Either way an Ingress whose class has no controller is
+accepted by the API server and then silently ignored — it just sits there with an
+empty `ADDRESS`, which is the usual reason "the Ingress applied fine but nothing
+works".
 
 ```sh
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
@@ -108,7 +116,7 @@ kubectl -n ingress-nginx get svc ingress-nginx-controller
 ```
 
 On EKS that Service provisions an AWS load balancer, and its `EXTERNAL-IP`
-becomes the entry point: `http://<address>/employee` and `http://<address>/user`.
+becomes the entry point: `http://<address>/` and `http://<address>/api`.
 To skip the load balancer cost while testing, install with
 `--set controller.service.type=NodePort` and hit the node port directly.
 
@@ -117,24 +125,45 @@ matching subpath, so the path the browser requests is the path nginx looks up.
 
 ### ingress-nginx instead
 
-The base targets **`alb`** — the AWS Load Balancer Controller. That is the
-default because EKS is the intended destination.
+The base sets **no class at all** and no controller annotations — it carries
+routes and nothing about who serves them. The overlay names the edge, and both
+overlays currently name **`alb`**, the AWS Load Balancer Controller, via
+`components/aws`.
 
-**It does nothing on a cluster without that controller.** An Ingress whose
-class no controller implements is accepted by the API server and then silently
-ignored: no routing, empty `ADDRESS`, no error anywhere. That covers every
-self-managed cluster — kubeadm on EC2, k3s, kind. There, install the community
-ingress-nginx controller (above) and enable the component:
+**An Ingress with no class, or a class no controller implements, does nothing.**
+The API server accepts it and then silently ignores it: no routing, empty
+`ADDRESS`, no error anywhere. So the component line is not optional decoration —
+it is what makes the render deployable.
+
+Pick exactly one edge component per overlay:
 
 ```yaml
 # k8s/overlays/<env>/kustomization.yaml
 components:
-  - ../../components/ingress-nginx
+  - ../../components/aws              # ALB + NodePort + ECR pull credentials
 ```
 
-It flips the class back to `nginx` and strips the four ALB annotations. Path
-rules are untouched, so `/employee` and `/user` behave identically either way.
-See [`k8s/components/ingress-nginx/`](../k8s/components/ingress-nginx/kustomization.yaml).
+On a self-managed cluster — kubeadm on EC2, k3s, kind — install the community
+ingress-nginx controller (above) and name it instead. Images still come from
+ECR there, so keep the registry component:
+
+```yaml
+components:
+  - ../../components/registry-ecr     # ECR pull credentials
+  - ../../components/ingress-nginx    # class nginx, Services stay ClusterIP
+```
+
+Path rules are untouched either way, so `/` and `/api` behave
+identically. On EKS drop `registry-ecr` entirely — the node role supplies pull
+credentials — and name
+[`components/ingress-alb`](../k8s/components/ingress-alb/kustomization.yaml) alone.
+
+| Component | Contributes |
+|---|---|
+| [`aws`](../k8s/components/aws/kustomization.yaml) | umbrella: `registry-ecr` + `ingress-alb` |
+| [`ingress-alb`](../k8s/components/ingress-alb/kustomization.yaml) | `ingressClassName: alb`, ALB annotations, Services → NodePort |
+| [`ingress-nginx`](../k8s/components/ingress-nginx/kustomization.yaml) | `ingressClassName: nginx`, Services stay ClusterIP |
+| [`registry-ecr`](../k8s/components/registry-ecr/kustomization.yaml) | the ECR pull-secret refresh CronJob and its RBAC |
 
 Two things decide whether the ALB path works at all:
 
@@ -143,12 +172,12 @@ AWS-published IAM policy, and `kubernetes.io/role/elb=1` tags on the public
 subnets or subnet auto-discovery fails. Straightforward on EKS; substantially
 more work on kubeadm, which has no IRSA to draw credentials from.
 
-**`target-type` has to match the CNI.** The base sets `ip`, which registers pod
-addresses directly with the target group and therefore needs VPC-routable pod
-IPs — the AWS VPC CNI. On an overlay CNI such as **Calico**, pod addresses
-exist only inside the cluster and the ALB cannot reach them. Use `instance`
-there, and make the Services `NodePort`, since instance targets route to a node
-port and have no ClusterIP to reach.
+**`target-type` has to match the CNI.** `components/ingress-alb` sets
+`instance`, which is the correct choice here: this cluster runs **Calico**, an
+overlay CNI whose pod addresses exist only inside the cluster, so the ALB cannot
+address them. `instance` routes to a node port instead — which is why the same
+component flips the Services to `NodePort`. Only switch to `ip` on the AWS VPC
+CNI, where pod addresses are VPC-routable.
 
 One behavioural difference: ALB has no default backend, so a request matching
 no rule returns a bare 404 from the load balancer rather than nginx's default
@@ -205,7 +234,7 @@ The overlays differ in exactly four fields:
 
 That last row is load-bearing, not cosmetic. A namespace is not a routing
 boundary: both Ingresses reach the same controller, so if both claimed
-`/employee` with no host, ingress-nginx would award the path to whichever
+`/` with no host, ingress-nginx would award the path to whichever
 object was created first and send UAT traffic to prod, or the reverse. No error
 is logged. Distinct hosts are what separate them.
 

@@ -1,0 +1,106 @@
+# THE ALB EDGE — the AWS Load Balancer Controller turns the Ingress into a real
+# ALB. The other half of ../aws, and the alternative to ../ingress-nginx.
+#
+# k8s/base carries routes and no class, so it is served by nothing on its own;
+# this names the controller that claims it and gives that controller its
+# arguments. Exactly ONE edge component per overlay.
+#
+# Requires the AWS Load Balancer Controller installed in the cluster, plus the
+# subnet tags it discovers VPC subnets by — see docs/deployment.md. Without it
+# the annotations below are inert and the Ingress never gets an address.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+patches:
+  # ---------------------------------------------------------------- the Ingress
+  - target:
+      kind: Ingress
+      name: company-web
+    patch: |
+      - op: add
+        path: /spec/ingressClassName
+        value: alb
+      - op: add
+        path: /metadata/annotations
+        value:
+          alb.ingress.kubernetes.io/scheme: internet-facing
+          # `instance`, not `ip`. `ip` registers pod addresses directly with the
+          # target group, which needs VPC-routable pod IPs — the AWS VPC CNI.
+          # This cluster runs Calico, an overlay CNI whose pod addresses exist
+          # only inside the cluster, so the ALB cannot reach them. `instance`
+          # targets the node's NodePort instead, which is why the Service patch
+          # below must set type: NodePort.
+          alb.ingress.kubernetes.io/target-type: instance
+          # Port 80 stays listed. ssl-redirect works by installing a redirect
+          # action on the HTTP listener, so removing 80 leaves nothing to
+          # redirect from and plain-HTTP links fail instead of upgrading.
+          alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+          alb.ingress.kubernetes.io/ssl-redirect: '443'
+          # A wildcard cert covering the apex + *.devops-selft-learning.xyz, so
+          # uat and prod share it. Set explicitly rather than relying on the
+          # controller's host-based auto-discovery, which has nothing to match
+          # while the prod overlay's hosts are commented out.
+          alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:043309361013:certificate/43fc6440-d2d6-4b46-b86d-bafab7378765
+          # Fallback only, and every Service overrides it — each one mounts at
+          # its own base path, so no single path is healthy on all of them
+          # (/user is a 404 on employee-web). Per-Service annotations win; see
+          # the workload/ directory of each service under base/services/.
+          alb.ingress.kubernetes.io/healthcheck-path: /
+
+  # --------------------------------------------------------------- the Services
+  #
+  # NodePort is a consequence of `target-type: instance` above: the ALB
+  # registers nodes and reaches each Service through its node port, which a
+  # ClusterIP Service does not have. Base leaves them ClusterIP because that is
+  # the portable default; this is the ALB-specific override.
+  #
+  # Not LoadBalancer. That would ask for one load balancer PER SERVICE,
+  # bypassing the single ALB this Ingress already builds — and on a kubeadm
+  # cluster nothing fulfils it, so it would sit at EXTERNAL-IP <pending>
+  # forever.
+  #
+  # Targets the KIND, not four names, for the same reason the overlays patch
+  # replicas by kind: commenting a service out of base must not break this file.
+  - target:
+      kind: Service
+    patch: |
+      - op: replace
+        path: /spec/type
+        value: NodePort
+
+  # ------------------------------------------------------- the NetworkPolicy
+  #
+  # THE NODE CIDR — one value, and it is account-specific. See
+  # docs/new-aws-account.md.
+  #
+  # With `target-type: instance` the ALB talks to a node's NodePort and
+  # kube-proxy forwards from there, so the packet the pod sees comes from a NODE
+  # address — not from any pod or namespace, and therefore matched by none of the
+  # rules in base/networkpolicy-ingress.yaml. Without this rule every ALB health
+  # check fails and the target group goes unhealthy, which reads as a broken app
+  # rather than a blocked one.
+  #
+  # 172.31.0.0/16 is the AWS DEFAULT-VPC range. A cluster in a custom VPC — which
+  # includes almost any account built deliberately — sits somewhere else, and the
+  # symptom is the same silent unhealthy target group. Confirm with:
+  #
+  #   kubectl get nodes -o wide          (the INTERNAL-IP column)
+  #
+  # and narrow it to the node subnets once their addresses are stable. This is
+  # also the rule that admits kubelet probes on CNIs that subject node traffic to
+  # policy, which is why it covers the same port.
+  #
+  # Appended rather than replacing: base's rules stay, this adds one.
+  - target:
+      kind: NetworkPolicy
+      name: app-allow-ingress
+    patch: |
+      - op: add
+        path: /spec/ingress/-
+        value:
+          from:
+            - ipBlock:
+                cidr: 172.31.0.0/16
+          ports:
+            - protocol: TCP
+              port: 3000

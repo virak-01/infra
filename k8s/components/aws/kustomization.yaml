@@ -1,0 +1,48 @@
+# THE DEFAULT AWS STACK — one line in an overlay, and the render is deployable
+# on AWS exactly as this repo has always deployed it.
+#
+#   overlays/<env>/kustomization.yaml:
+#     components:
+#       - ../../components/aws
+#
+# This file owns no manifests of its own. It composes the two AWS pieces, which
+# are separate because they answer separate questions:
+#
+#   ../registry-ecr   where the images come from   -> ECR pull-secret refresh
+#   ../ingress-alb    what builds the load balancer -> ALB annotations, NodePort
+#
+# Keeping them apart is what makes the in-between cases expressible. A k3s or
+# kubeadm box on EC2 pulls from ECR but is usually served by ingress-nginx, and
+# that combination is a two-line overlay rather than a fork of this file:
+#
+#   components:
+#     - ../../components/registry-ecr
+#     - ../../components/ingress-nginx
+#
+# EKS is the mirror image — the node role supplies pull credentials, so it wants
+# ../ingress-alb alone and no registry component at all.
+#
+# ADDING A CLOUD later means a sibling umbrella (components/gcp naming
+# components/registry-gar and components/ingress-gce) and changing the one
+# `components:` line in each overlay. Nothing in k8s/base moves again.
+#
+# WHAT IS NOT HERE, on purpose:
+#
+#   * The per-Service `alb.ingress.kubernetes.io/healthcheck-path` annotations,
+#     which stay in k8s/base/services/*/workload/. That is the service saying
+#     where its health endpoint is — service knowledge, not cloud knowledge —
+#     and the four values all differ. Hoisting them would mean naming all four
+#     Services in a second place, and the service list is meant to exist exactly
+#     once (see k8s/base/kustomization.yaml). The annotation is inert on every
+#     other ingress controller, so leaving it costs nothing.
+#
+#   * The cluster-scoped add-ons (Cluster Autoscaler). Those are one per
+#     CLUSTER, not one per environment; both overlays render this component, so
+#     anything placed here would be created twice. They live in k8s/cluster/aws/
+#     and are applied by `make cluster`.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+components:
+  - ../registry-ecr
+  - ../ingress-alb

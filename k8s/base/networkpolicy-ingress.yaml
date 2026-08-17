@@ -1,7 +1,42 @@
+# Inbound policy, shaped like networkpolicy-egress.yaml: one blanket deny that
+# selects every pod, then narrow allows for the pods that must be reachable.
+#
+# It used to be a single allow selecting employee-web and user-web. With no
+# blanket deny, every pod it did NOT name — api-auth-web and api-core-web, both
+# of which are deployed — was reachable on port 3000 from any pod in any
+# namespace in the cluster. Naming pods in an allow does not restrict the ones
+# you left out; only a deny does.
+---
+# Selects every pod, permits nothing. NetworkPolicies are additive, so this sets
+# the floor and the allow below adds back exactly what is needed.
+#
+# Safe for the ECR refresh job, which this also selects: it makes outbound calls
+# and receives no connections.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: web-allow-ingress
+  name: deny-all-ingress
+  annotations:
+    # Applied last, after the Deployments report healthy — same reasoning as the
+    # allow below. See docs/security.md.
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+# ONE policy for every pod that serves HTTP, rather than one per service. All
+# four want exactly the same thing — reachable from the ingress controller on
+# 3000 — so splitting them would be four copies of one rule, drifting apart.
+#
+# The value list is the same shape as networkpolicy-egress.yaml's. It names pods
+# that may not be deployed (user-web is currently commented out of
+# kustomization.yaml); a value matching nothing is inert, which is what keeps
+# the one-line service switch working.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: app-allow-ingress
   annotations:
     argocd.argoproj.io/sync-wave: "10"
 spec:
@@ -12,13 +47,15 @@ spec:
         values:
           - employee-web
           - user-web
+          - api-auth-web
+          - api-core-web
 
   policyTypes:
     - Ingress
 
   ingress:
     # The ingress-nginx path, kept so the ingress-nginx component still works
-    # if an overlay switches back to it.
+    # if an overlay switches to it.
     - from:
         - namespaceSelector:
             matchLabels:
@@ -27,19 +64,30 @@ spec:
         - protocol: TCP
           port: 3000
 
-    # The ALB path. With `target-type: instance` the ALB talks to a node's
-    # NodePort, and kube-proxy forwards from there — so the packet the pod sees
-    # comes from a NODE address, not from any pod or namespace. Without this
-    # rule every ALB health check fails and the target group goes unhealthy,
-    # which reads as a broken app rather than a blocked one.
+    # Service-to-service inside this namespace. `podSelector: {}` in a `from`
+    # block means "any pod in the same namespace as this policy" — NOT any pod
+    # anywhere, which is what the namespaceSelector above would mean if left
+    # empty.
     #
-    # MUST match the VPC CIDR the nodes actually sit in. 172.31.0.0/16 is the
-    # AWS default-VPC range; confirm with
-    #   kubectl get nodes -o wide          (the INTERNAL-IP column)
-    # and narrow it once the node addresses are stable.
+    # Present because api-core and api-auth are a pair and either may call the
+    # other directly by Service name, bypassing the ingress. Pod addresses are
+    # not inside the node CIDR — Calico allocates from its own range — so the
+    # ALB rule below does not cover them, and without this rule an internal call
+    # would fail with a timeout rather than a refusal.
+    #
+    # The trade-off, stated plainly: any pod in this namespace can reach any of
+    # these four on 3000. That is a real widening over naming exact peers, and
+    # it is chosen because the namespace holds only these apps plus the ECR
+    # refresh job. Tighten it to specific `app` labels if that stops being true.
     - from:
-        - ipBlock:
-            cidr: 172.31.0.0/16
+        - podSelector: {}
       ports:
         - protocol: TCP
           port: 3000
+
+    # THE ALB PATH IS NOT HERE. It needs the node CIDR, which is a property of
+    # the VPC rather than of this repo, and it is only needed because the ALB
+    # targets node ports — so it lives in
+    # ../components/ingress-alb/kustomization.yaml, next to the other
+    # account-specific values. An overlay using the ingress-nginx component
+    # needs no such rule and does not get one.

@@ -95,19 +95,34 @@ That is the base's `nodeAffinity` rejecting control-plane nodes, doing exactly
 its job. Your only node **is** the control plane, so nothing can be scheduled.
 The rule is right; the cluster is too small for it.
 
-Use the overlay built for this:
+> **There used to be a `k8s/overlays/ec2-test` overlay for this, and it no longer
+> exists** — it was removed in commit `48cbea4`. The instructions below replace
+> it; `make deploy ENV=ec2-test` will now fail with a kustomize error, because
+> `k8s/overlays/` holds only `uat` and `prod`.
 
-```sh
-kubectl delete -k k8s/overlays/uat
-make deploy ENV=ec2-test
-kubectl -n uat get pods -w
+Patch the affinity out of whichever overlay you are testing with. Add to
+`k8s/overlays/uat/kustomization.yaml`, under its existing `patches:` key:
+
+```yaml
+  # TEST ONLY, single-node k3s. Do not commit.
+  - target:
+      kind: Deployment
+    patch: |
+      - op: remove
+        path: /spec/template/spec/affinity
 ```
 
-[`k8s/overlays/ec2-test`](../k8s/overlays/ec2-test/kustomization.yaml) is the
-same base with the affinity patched out and one replica each. It is **test
-only** — and note what that costs you: the nodeAffinity rule is no longer being
-exercised. To test that rule for real, add a second k3s agent node and go back
-to `ENV=uat`.
+Then:
+
+```sh
+make render ENV=uat | grep -A3 affinity    # expect nothing
+make deploy rollout ENV=uat
+```
+
+Note what this costs you: the `nodeAffinity` rule is no longer being exercised,
+so nothing verifies that pods stay off control-plane nodes. To test that rule for
+real, add a second k3s agent node and drop the patch again. **Remove the patch
+before committing** — landing it would let prod schedule onto a control plane.
 
 ## 6. Install the ingress controller
 
@@ -137,9 +152,9 @@ PORT(S)
 From your laptop, using the instance's **public IP** and that NodePort:
 
 ```sh
-curl -s http://<public-ip>:31234/employee | head -5
-open http://<public-ip>:31234/employee
-open http://<public-ip>:31234/user
+curl -s http://<public-ip>:31234/ | head -5
+open http://<public-ip>:31234/
+open http://<public-ip>:31234/api/health
 ```
 
 If it hangs, the security group is the first suspect — confirm the port range
@@ -193,7 +208,7 @@ policy, re-run, and put it back:
 ```sh
 kubectl -n uat delete networkpolicy deny-all-egress
 # re-run the probe above: it now prints your instance id
-make deploy ENV=ec2-test        # restores the policy
+make deploy ENV=uat             # restores the policy
 ```
 
 That difference is the entire argument for the egress policy, and it is worth

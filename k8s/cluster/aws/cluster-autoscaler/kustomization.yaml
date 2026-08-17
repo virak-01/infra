@@ -1,6 +1,8 @@
-# Cluster-scoped add-on, applied ONCE per cluster:
+# Cluster-scoped add-on, applied ONCE per cluster. Reached through the AWS
+# add-on set rather than directly:
 #
-#   kubectl apply -k k8s/cluster/cluster-autoscaler
+#   make cluster                    (applies k8s/cluster/aws, CLOUD=aws)
+#   kubectl apply -k k8s/cluster/aws
 #
 # Deliberately not under k8s/base. Everything there is rendered by both
 # overlays, which stamp `namespace: prod` / `namespace: uat` onto it — that

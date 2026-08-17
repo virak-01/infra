@@ -5,7 +5,7 @@ Two different things scale here, and they are often confused:
 | | Scales | Trigger | Where |
 |---|---|---|---|
 | HorizontalPodAutoscaler | pods | CPU above 70% of request | [`k8s/base/web/hpa.yaml`](../k8s/base/web/hpa.yaml) |
-| Cluster Autoscaler | nodes | pods stuck **Pending** | [`k8s/cluster/cluster-autoscaler`](../k8s/cluster/cluster-autoscaler) |
+| Cluster Autoscaler | nodes | pods stuck **Pending** | [`k8s/cluster/aws/cluster-autoscaler`](../k8s/cluster/aws/cluster-autoscaler) |
 
 Cluster Autoscaler reacts to **Pending pods only**. A cluster at 99% CPU with
 nothing pending will not grow. The HPA is what creates the pending pods, so
@@ -191,9 +191,14 @@ Balancer Controller watches Node objects, and the Ingress uses
 ### 6. Deploy
 
 ```sh
-kubectl apply -k k8s/cluster/cluster-autoscaler
+make cluster                      # applies k8s/cluster/$(CLOUD), CLOUD=aws by default
 kubectl -n kube-system rollout status deploy/cluster-autoscaler
 ```
+
+`k8s/cluster/<cloud>/` is the whole convention: `make cluster` applies that
+directory and skips with a notice when it does not exist, so a cluster on
+another cloud is never handed AWS controllers. `kubectl apply -k k8s/cluster/aws`
+does the same thing directly.
 
 ## Verifying
 

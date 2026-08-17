@@ -1,34 +1,64 @@
-# Static sites on Kubernetes
+# Web platform on Kubernetes
 
-Deployment manifests for two static sites — **employee** (internal portal) and
-**user** (customer account page) — each an nginx image serving `index.html` +
-`style.css`, deployed as its own Deployment + Service, with one Ingress
-path-routing to both. Argo CD keeps the cluster matching this repo.
+Deployment manifests for a Nuxt/Nitro site and two NestJS APIs, each its own
+Deployment + Service off one shared template, with a single Ingress routing to
+all of them across two hosts. Argo CD keeps the cluster matching this repo.
 
-**This repo deploys images; it does not build them.** The site source lives
-elsewhere and publishes to a registry; here you name a tag and the cluster pulls
-it. Nothing in this repo needs Docker.
+**This repo deploys images; it does not build them.** The source lives elsewhere
+and publishes to a registry; here you name a tag and the cluster pulls it.
+Nothing in this repo needs Docker.
+
+Services are switched on and off one line at a time in
+[`k8s/base/kustomization.yaml`](k8s/base/kustomization.yaml) — workload and route
+together. **`user` is currently commented out there, so `/user` does not
+exist**; the image mapping for it survives in the overlays and is inert.
 
 ```
 registry (private ECR, us-east-1)
-  043309361013.dkr.ecr.us-east-1.amazonaws.com/employee-web:<tag>  ->  /employee
-  043309361013.dkr.ecr.us-east-1.amazonaws.com/user-web:<tag>      ->  /user
+  <acct>.dkr.ecr.us-east-1.amazonaws.com/website:<tag>  ->  /            (employee)
+  <acct>.dkr.ecr.us-east-1.amazonaws.com/core:<tag>     ->  /api
+  <acct>.dkr.ecr.us-east-1.amazonaws.com/auth:<tag>     ->  /api/auth  /api/health
 
 k8s/
-  base/
-    web/        Deployment + Service, written once and shared
-    employee/   name, image, probe path for the employee site
-    user/       name, image, probe path for the user site
+  base/                 CLOUD-NEUTRAL. Runs anywhere; serves nothing alone.
+    web/                Deployment + Service, written once and shared
+    services/           name, image, probe path + route, one dir per service
     namespace.yaml  ingress.yaml  networkpolicy-*.yaml
   overlays/
-    uat/        namespace + tag + replicas + host for UAT
-    prod/       namespace + tag + replicas + host for prod
-  components/
-    ingress-nginx/  opt-in: swap the ALB class for ingress-nginx
+    uat/                namespace + tag + replicas + host + CLOUD for UAT
+    prod/               namespace + tag + replicas + host + CLOUD for prod
+  components/           THE CLOUD. One `components:` line per overlay.
+    aws/                umbrella: registry-ecr + ingress-alb
+    ingress-alb/          class alb, ALB annotations, Services -> NodePort
+    ingress-nginx/        class nginx, Services stay ClusterIP
+    registry-ecr/         ECR pull-secret refresh CronJob
+  cluster/              one set per CLUSTER, not per environment
+    aws/                Cluster Autoscaler  (`make cluster`)
 
 argocd/       one Application per environment
 docs/         deployment, security, Argo CD, EC2 testing
 ```
+
+`k8s/base` names no cloud, no registry and no ingress controller. An Ingress
+with no class is accepted by the API server and then ignored by every
+controller, so base renders something valid that serves nothing — deliberately.
+The overlay's `components:` line is what makes it deployable, and today both
+overlays name `components/aws`:
+
+| Where you run | `components:` |
+|---|---|
+| EKS + ALB | `aws` — or `ingress-alb` alone, since the node role supplies pull credentials |
+| kubeadm/k3s on EC2 | `registry-ecr` + `ingress-nginx` |
+| anywhere else | `ingress-nginx` |
+
+Two axes, kept separate on purpose: **where images come from** and **what
+builds the load balancer**. Bundling them would make ECR-behind-nginx — this
+repo's own k3s-on-EC2 story — unreachable without a fork.
+
+The cloud is chosen in the overlay rather than by a make variable because Argo
+CD renders the overlay straight from git and never runs make; a cloud picked in
+the Makefile would be reverted on the next sync. `CLOUD` in the Makefile
+selects cluster add-ons under `k8s/cluster/` and nothing else.
 
 UAT and prod share **one cluster** and are separated by **namespace** — `uat`
 and `prod`. Resource names are identical in both, which namespaces make safe,
@@ -39,12 +69,14 @@ own, and kustomize uses that to stamp every resource *and* to rename
 
 The overlays differ in exactly four things: namespace, image tag, replica
 count, and **Ingress host** — that last one is not optional. Two hostless
-Ingresses claiming `/employee` in the same cluster collide silently, and the
-path goes to whichever was created first.
+Ingresses claiming `/` in the same cluster collide silently, and the path goes
+to whichever was created first.
 
-Each image serves its files under a matching subpath
-(`/usr/share/nginx/html/employee/`), so the Ingress needs no rewrite rules and
-relative links to `style.css` resolve correctly.
+Each service serves its own base path, so the Ingress needs no rewrite rules.
+The site holds `/` and is therefore the last resort on its host; the APIs sit on
+the second host, where `pathType: Prefix` awards a request to the longest match —
+`/api/auth` beats `/api`, so api-auth keeps its traffic and everything else falls
+to api-core.
 
 Only `k8s/overlays/*` is deployable. `k8s/base` renders images untagged on
 purpose — a tag is a release decision, so it lives in an overlay.
@@ -56,7 +88,7 @@ make envs                       # what each environment is pinned to
 make render ENV=uat             # print exactly what would be applied
 make diff   ENV=uat             # what would change in the live cluster
 make deploy ENV=uat             # apply k8s/overlays/uat into namespace uat
-make rollout ENV=uat            # wait for both Deployments
+make rollout ENV=uat            # wait for every Deployment in the namespace
 ```
 
 `make` with no target lists everything. `ENV` defaults to `prod` and is the only
@@ -69,15 +101,23 @@ variable you normally set.
 ## Reaching it
 
 `prod` keeps a **hostless** Ingress rule and is therefore the catch-all: any
-`Host` no other Ingress claims lands there, so it is reachable by bare node IP
-with no DNS at all.
+`Host` no other Ingress claims lands there, so it is reachable by the bare ALB
+hostname with no DNS at all.
 
 ```
-http://<node-ip>:<nodeport>/employee     -> prod
-http://<node-ip>:<nodeport>/user         -> prod
+http://<alb-hostname>/                  -> prod   (employee site)
+http://<alb-hostname>/api               -> prod   (api-core)
+http://<alb-hostname>/api/auth          -> prod   (api-auth)
+http://<alb-hostname>/api/health        -> prod   (api-auth)
 ```
 
-`uat` is the only environment claiming a hostname, which is what separates the
+> **Being hostless is why prod has no working TLS.** The ALB carries an ACM
+> certificate and `ssl-redirect: '443'`, so requests are forced to HTTPS and then
+> fail certificate-name validation against the ALB's own hostname. Uncomment the
+> host patch in [`k8s/overlays/prod`](k8s/overlays/prod/kustomization.yaml) and
+> add Route 53 ALIAS records to fix it. See [docs/security.md](docs/security.md).
+
+`uat` is the only environment claiming hostnames, which is what separates the
 two. Exactly one hostless Ingress per class is safe; two collide silently.
 
 The overlays carry a **placeholder** host, deliberately — a node's public IP is
@@ -128,6 +168,7 @@ fails any overlay that renders an untagged image, since that resolves to
 
 | Doc | Covers |
 |---|---|
+| [New AWS account](docs/new-aws-account.md) | **start here on a fresh account** — bootstrap order, every hardcoded value to replace, teardown |
 | [Deployment](docs/deployment.md) | building, ECR, installing ingress-nginx, ALB, port-forward checks, worker-node placement |
 | [Security](docs/security.md) | Pod Security Standards, the two NetworkPolicies, the CNI caveat, what is still outstanding |
 | [Argo CD](docs/argocd.md) | installing it, the Application, why sync is manual, sync waves |
@@ -143,7 +184,7 @@ kubectl -n kube-system get pods
 
 
 kubectl -n uat get secret ecr-creds
-kubectl -n uat rollout restart deploy/employee-web deploy/user-web
+kubectl -n uat rollout restart deploy/employee-web deploy/api-auth-web deploy/api-core-web
 make rollout ENV=uat
 kubectl -n uat get pods
 
@@ -209,7 +250,7 @@ kubectl -n prod get pods -l app=api-auth-web
 
 ## Testing
 ALB=http://k8s-prod-companyw-e8ccf87b86-1395706170.us-east-1.elb.amazonaws.com
-for p in /api/health /employee/ /user/; do
+for p in / /api /api/auth /api/health; do
   printf "%-16s " "$p"
   curl -s -m 10 -o /dev/null -w "%{http_code}  %{time_total}s\n" "$ALB$p" || echo FAILED
 done

@@ -5,14 +5,15 @@ kind: Service
 metadata:
   name: web
 spec:
-  # NodePort is required by the Ingress's `target-type: instance`: the ALB
-  # registers nodes and reaches this Service through its node port, which a
-  # ClusterIP Service does not have.
+  # ClusterIP is the portable default: an in-cluster ingress controller reaches
+  # pods directly and needs nothing more.
   #
-  # Not LoadBalancer. That would ask for a second load balancer per site,
-  # bypassing the ALB the Ingress already builds — and nothing on a kubeadm
-  # cluster fulfils it, so it would sit at EXTERNAL-IP <pending> forever.
-  type: NodePort
+  # AWS is the exception and overrides this to NodePort in
+  # ../../components/aws, because the ALB is registered against nodes
+  # (`target-type: instance`) and a ClusterIP Service has no node port for it to
+  # reach. Stated explicitly rather than omitted so that override is a `replace`
+  # on a field that exists, and so the two clouds' choices read side by side.
+  type: ClusterIP
   selector:
     app: web
   ports:

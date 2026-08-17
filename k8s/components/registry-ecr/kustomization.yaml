@@ -1,0 +1,44 @@
+# PULLING FROM ECR on a cluster with no AWS-native credential provider.
+#
+# One of the two axes that make up ../aws, and separate from it on purpose:
+# WHERE THE IMAGES COME FROM is not the same question as WHAT BUILDS THE LOAD
+# BALANCER. The combination that proves it is this repo's own k3s-on-EC2 story
+# (docs/ec2-testing.md) — ECR images behind ingress-nginx:
+#
+#   components:
+#     - ../../components/registry-ecr
+#     - ../../components/ingress-nginx
+#
+# Folding this into an all-of-AWS component would make that combination
+# unreachable: choosing nginx would silently drop the pull credentials, and the
+# symptom is ImagePullBackOff on the next node that has not cached the layers.
+#
+# NOT NEEDED ON EKS. Grant the node role AmazonEC2ContainerRegistryReadOnly
+# instead — the kubelet then mints a token per pull, nothing is stored, and
+# nothing can go stale. Drop this line from the overlay there.
+#
+# The Secret must exist before the first pod pulls; the CronJob only keeps it
+# fresh. Run `make ecr-secret ENV=<env>` once after the first deploy.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - ecr-credentials.yaml
+
+# The same provenance labels k8s/base/kustomization.yaml applies, repeated
+# because a transformer only reaches what its own kustomization has accumulated.
+# ecr-credentials.yaml is contributed HERE, after base has finished, so base's
+# copy never sees it — without this the five objects it creates are the only
+# unlabelled resources in the namespace.
+#
+# Applying them again to the base resources this component also sees is a no-op:
+# identical keys, identical values.
+#
+# includeSelectors is false — and must stay false: these keys would otherwise
+# land in the Deployments' immutable selectors and break every apply against the
+# running objects.
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: company-web
+      app.kubernetes.io/managed-by: kustomize
+    includeSelectors: false

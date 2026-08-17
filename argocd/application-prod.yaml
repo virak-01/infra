@@ -34,16 +34,45 @@ spec:
     syncOptions:
       - CreateNamespace=true
 
-    # Sync is deliberately MANUAL: no `automated:` block.
+    # Sync is deliberately MANUAL: no `automated:` block. ../application-uat.yaml
+    # has selfHeal on, on purpose — UAT proves the sync is clean before prod
+    # inherits it.
     #
-    # Argo CD's job is making the cluster match git, and git says the Services
-    # are ClusterIP. The NodePort currently serving traffic exists only in the
-    # cluster, so the first sync will remove it. Manual sync means you see that
-    # in the diff and decide, instead of finding out from a dead URL.
+    # The reason this used to give is now obsolete and worth correcting rather
+    # than deleting: it said git described ClusterIP Services while the cluster
+    # ran NodePort, so a first sync would remove the NodePort and kill the URL.
+    # Git now describes NodePort — k8s/components/ingress-alb sets it, because
+    # the ALB targets node ports — so that particular trap is gone.
     #
-    # Once the Ingress serves your users and the repo describes what is really
-    # running, enable automation:
+    # What keeps this manual is narrower: nobody has yet run one clean
+    # `make diff ENV=prod` against the live cluster. Turning selfHeal on makes
+    # the FIRST action a forced convergence to git, and any deliberate manual fix
+    # in prod disappears without appearing in a diff first. Do that once:
+    #
+    #   make diff ENV=prod        # expect no surprises
+    #
+    # then uncomment:
     #
     #   automated:
-    #     prune: true      # delete resources removed from git
-    #     selfHeal: true   # revert manual kubectl changes
+    #     selfHeal: true
+    #
+    # Leave `prune` off unless you specifically want git deletions to delete
+    # running workloads — see ../application-uat.yaml for why.
+
+  # THE HPA OWNS THE REPLICA COUNT, git only sets a floor.
+  #
+  # k8s/base/web/deployment.yaml declares `replicas: 2` so a cluster without
+  # metrics-server still runs two pods. The HorizontalPodAutoscaler then moves the
+  # live count to whatever load requires. Argo CD sees the difference between git
+  # and the cluster and reports the Application permanently OutOfSync — and with
+  # selfHeal on it would actively scale the Deployment back down, fighting the HPA
+  # every reconcile loop and undoing a scale-out during exactly the traffic spike
+  # that caused it.
+  #
+  # Ignoring the field is the documented fix and it does not weaken anything: git
+  # still owns the floor, the HPA still owns the operating value.
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas

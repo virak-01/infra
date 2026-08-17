@@ -33,16 +33,37 @@ HOST     ?=
 AWS_REGION   ?= us-east-1
 ECR_REGISTRY ?= 043309361013.dkr.ecr.$(AWS_REGION).amazonaws.com
 
+# WHICH CLOUD'S CLUSTER ADD-ONS TO APPLY. Selects a directory under k8s/cluster/,
+# and nothing else — `make cluster CLOUD=gcp` applies k8s/cluster/gcp if someone
+# adds it, and skips with a notice if they have not.
+#
+# THIS DOES NOT CHOOSE THE CLOUD FOR THE WORKLOADS. That is one line in
+# k8s/overlays/<env>/kustomization.yaml naming k8s/components/aws or
+# k8s/components/ingress-nginx, and it has to live there because Argo CD renders
+# the overlay straight from git and never runs make. A cloud picked by a make
+# variable would be invisible to the thing that actually applies the manifests,
+# and every sync would revert it.
+CLOUD ?= aws
+
+# Cluster-scoped add-ons for $(CLOUD), applied once per cluster rather than once
+# per ENV. Not an overlay: see the `cluster` target for why it cannot live in
+# k8s/base.
+CLUSTER_ADDONS := k8s/cluster/$(CLOUD)
+
 .DEFAULT_GOAL := help
-.PHONY: help envs current render validate diff deploy rollout app-config aws-creds ecr-secret
+.PHONY: help envs current render validate diff deploy cluster rollout app-config aws-creds ecr-secret
 
 help: ## Show this help
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
 	  | awk -F':.*?## ' '{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 	@echo
 	@echo "  vars: ENV=$(ENV)   (overlays: $$(ls k8s/overlays | tr '\n' ' '))"
+	@echo "        CLOUD=$(CLOUD)   (cluster add-ons: $$(ls k8s/cluster | tr '\n' ' '))"
 	@echo "  note: uat and prod share one cluster, separated by namespace."
 	@echo "        ENV picks the environment — it is both the overlay and the ns."
+	@echo "        CLOUD picks cluster add-ons ONLY. The workload edge (ALB vs"
+	@echo "        ingress-nginx) is a components: line in the overlay, because"
+	@echo "        Argo CD renders from git and never runs make."
 
 envs: ## Show what each environment is pinned to
 	@for o in k8s/overlays/*/; do \
@@ -94,7 +115,36 @@ diff: ## Show what applying would change in the live cluster
 	@# not an error. Anything above 1 is a real failure and still propagates.
 	@kubectl diff -k $(OVERLAY) || test $$? -eq 1
 
-deploy: ## Apply the overlay (HOST=<fqdn> overrides the Ingress host)
+cluster: ## Apply k8s/cluster/<CLOUD> add-ons — one set per CLUSTER, not per ENV
+	@# NOT part of the overlay, and deliberately not under k8s/base: everything
+	@# there is rendered by both overlays, which would stamp `namespace: prod`
+	@# and `namespace: uat` onto a controller that must exist exactly once. Two
+	@# Cluster Autoscalers would drive the same ASG in opposite directions.
+	@#
+	@# ENV is therefore ignored here. These manifests are byte-identical
+	@# whichever environment you deploy, so re-applying from a uat deploy is a
+	@# no-op rather than a conflict — that is what makes it safe as a `deploy`
+	@# prerequisite. The trade-off is real though: a uat deploy now touches
+	@# kube-system. Run `make deploy` with this split out if that matters.
+	@#
+	@# A MISSING DIRECTORY IS NOT AN ERROR. `deploy` depends on this target, so a
+	@# hard failure here would block every deploy on a cloud whose add-on set
+	@# nobody has written yet — the workloads do not need it. It skips loudly
+	@# instead. `make cluster` alone on an unknown CLOUD still tells you plainly.
+	@if [ ! -d "$(CLUSTER_ADDONS)" ]; then \
+	  echo "→ no cluster add-ons for CLOUD=$(CLOUD) ($(CLUSTER_ADDONS) does not exist) — skipping"; \
+	  echo "  clouds with add-ons: $$(ls k8s/cluster | tr '\n' ' ')"; \
+	else \
+	  echo "context: $$(kubectl config current-context)"; \
+	  kubectl apply -k $(CLUSTER_ADDONS) || exit 1; \
+	  echo; \
+	  kubectl kustomize $(CLUSTER_ADDONS) \
+	    | kubectl get -f - -o name --ignore-not-found 2>/dev/null \
+	    | grep '^deployment' \
+	    | xargs -r kubectl -n kube-system get; \
+	fi
+
+deploy: cluster ## Apply the overlay (HOST=<fqdn> overrides the Ingress host)
 	@echo "context: $$(kubectl config current-context)"
 	kubectl apply -k $(OVERLAY)
 	@# A shell `if`, not make's $(if): the JSON below is full of commas, and

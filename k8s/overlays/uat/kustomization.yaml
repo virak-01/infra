@@ -13,10 +13,16 @@ kind: Kustomization
 resources:
   - ../../base
 
-# NO ingress-nginx component here, matching ../prod — both environments are
-# served by the ALB. The two share a cluster and must agree on the ingress
-# class, so this file and ../prod/kustomization.yaml change together or not at
-# all.
+# THE CLOUD, matching ../prod — both environments are served by the ALB. Base is
+# cloud-neutral and this is what makes the render deployable on AWS: ALB
+# annotations, NodePort Services, the ECR pull-secret refresh job.
+#
+# The two share a cluster and must agree on the ingress class, so this line and
+# ../prod/kustomization.yaml's change together or not at all. Swapping only one
+# to ../../components/ingress-nginx leaves two controllers claiming hosts in one
+# cluster, resolved by creation order and never logged.
+components:
+  - ../../components/aws
 
 # The environment. This is the only place it is declared: the base deliberately
 # sets no namespace, so this value both stamps every resource below and renames

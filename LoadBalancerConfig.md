@@ -17,7 +17,7 @@ Application Load Balancer          public subnets, one per AZ
 EC2 node : NodePort                target-type: instance
    │                               (30000-32767)
    ▼
-kube-proxy  ──►  employee-web / user-web pod : 3000
+kube-proxy  ──►  employee-web / api-core-web / api-auth-web pod : 3000
 ```
 
 Two facts drive every decision below:
@@ -46,12 +46,17 @@ aws ec2 describe-vpcs --region us-east-1 \
 | Region | `us-east-1` |
 | Subnets | 6 public, one per AZ |
 
-**The CIDR is load-bearing outside AWS too.** `k8s/base/networkpolicy-ingress.yaml`
-allows pod traffic from that range, because an ALB using instance targets
+**The CIDR is load-bearing inside the cluster too.**
+`k8s/components/ingress-alb/kustomization.yaml` appends a NetworkPolicy rule
+allowing pod traffic from that range, because an ALB using instance targets
 arrives from a *node* address rather than from a pod or namespace. If the VPC
-CIDR ever changes, that policy has to change with it or every health check is
+CIDR ever changes, that rule has to change with it or every health check is
 silently dropped — the pods stay up, the target group goes unhealthy, and
 nothing logs a reason.
+
+It lives in the ALB component rather than in `k8s/base` precisely because it is
+an ALB-and-account-specific value; an overlay served by ingress-nginx needs no
+such rule and does not render one.
 
 ## 2. Subnets
 
@@ -236,23 +241,30 @@ No change is needed here — this is what the repo renders, and why.
 | `alb.../target-type` | `instance` | Calico pod IPs are not VPC-routable, so `ip` cannot work |
 | `alb.../scheme` | `internet-facing` | public ALB |
 | Service `type` | `NodePort` | required by `instance` targets; a ClusterIP has no node port |
-| `alb.../healthcheck-path` | per Service | `/employee/` and `/user/` — set on each Service, since one target group is created per backend and each site serves only its own subpath |
+| `alb.../healthcheck-path` | per Service | `/` on employee-web, `/api/health` on both APIs — set on each Service, since one target group is created per backend and each serves only its own base path |
 
 The health check path is the subtle one. Annotations on a **Service** override
-the same annotation on the Ingress, which is the only way to give two backends
-different paths from a single Ingress. A shared `/employee/` would 404 on
-`user-web` and mark half the fleet unhealthy.
+the same annotation on the Ingress, which is the only way to give several
+backends different paths from a single Ingress. A shared `/` would 404 on the
+APIs and mark two thirds of the fleet unhealthy.
 
-To fall back to the in-cluster ingress-nginx controller instead, add to both
-overlays:
+To fall back to the in-cluster ingress-nginx controller instead, change the
+component line in both overlays from `../../components/aws` to:
 
 ```yaml
 components:
-  - ../../components/ingress-nginx
+  - ../../components/registry-ecr     # keep: images still come from ECR
+  - ../../components/ingress-nginx    # class nginx instead of alb
 ```
 
-That flips the class to `nginx` and strips the ALB annotations. The `NodePort`
-Services work under either controller, so nothing else changes.
+`components/aws` is only an umbrella over `registry-ecr` + `ingress-alb`, so
+this swaps the edge and keeps the pull credentials. The ALB annotations and the
+`NodePort` Service type come from `ingress-alb` and simply do not render;
+Services stay ClusterIP, which is what ingress-nginx wants.
+
+Both overlays must agree — they share a cluster, and two ingress classes
+claiming the same hosts is resolved by whichever object was created first,
+silently.
 
 ## 7. Verify
 
@@ -261,8 +273,8 @@ kubectl -n prod get ingress company-web -w        # ADDRESS fills in, ~2-3 min
 
 ALB=$(kubectl -n prod get ingress company-web \
   -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-curl -I http://$ALB/employee/
-curl -I http://$ALB/user/
+curl -I http://$ALB/
+curl -I http://$ALB/api/health
 ```
 
 Both return `200`. The trailing slash matters — each site serves under its own

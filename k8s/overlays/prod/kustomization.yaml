@@ -3,6 +3,22 @@ kind: Kustomization
 
 resources:
   - ../../base
+
+# THE CLOUD. Base is cloud-neutral — routes but no ingress class, ClusterIP
+# Services, no registry credentials — and this line is what makes the render
+# deployable on AWS: ALB annotations, NodePort Services, the ECR pull-secret
+# refresh job.
+#
+# Swap it for ../../components/ingress-nginx to serve this environment from an
+# in-cluster controller instead. Exactly one edge component, and ../uat must
+# agree: the two share a cluster, and two ingress classes claiming the same
+# hosts is resolved by whichever object was created first, silently.
+#
+# It lives here rather than in the Makefile because Argo CD renders this file
+# straight from git and never runs make.
+components:
+  - ../../components/aws
+
 namespace: prod
 images:
   - name: employee-web

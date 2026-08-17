@@ -37,14 +37,38 @@ spec:
     syncOptions:
       - CreateNamespace=true
 
-    # Manual for now, matching prod — a first sync against a cluster that
-    # already has resources can delete things you meant to keep, and that is
-    # worth seeing in a diff once.
-    #
-    # UAT is the right place to turn automation on first, though: it is the
-    # environment whose whole job is catching this before prod does. Once the
-    # first sync is clean, uncomment:
-    #
-    #   automated:
-    #     prune: true      # delete resources removed from git
-    #     selfHeal: true   # revert manual kubectl changes
+    automated:
+      # Revert manual kubectl changes, so the cluster cannot drift away from git
+      # without someone noticing. UAT goes first deliberately: it is the
+      # environment whose job is catching this before prod does.
+      selfHeal: true
+
+      # prune is deliberately LEFT OFF, here and in prod.
+      #
+      # selfHeal only corrects resources git still describes; prune DELETES the
+      # ones it no longer does. That is the half that can take something down,
+      # and this repo has a live example of why: commenting a service out of
+      # k8s/base/kustomization.yaml is meant to be a one-line switch, and with
+      # prune on it becomes a one-line deletion of a running workload. Enable it
+      # once you want that, and know that is what you are enabling.
+      #
+      #   prune: true
+      # prune: true
+
+  # THE HPA OWNS THE REPLICA COUNT, git only sets a floor.
+  #
+  # k8s/base/web/deployment.yaml declares `replicas: 2` so a cluster without
+  # metrics-server still runs two pods. The HorizontalPodAutoscaler then moves the
+  # live count to whatever load requires. Argo CD sees the difference between git
+  # and the cluster and reports the Application permanently OutOfSync — and with
+  # selfHeal on it would actively scale the Deployment back down, fighting the HPA
+  # every reconcile loop and undoing a scale-out during exactly the traffic spike
+  # that caused it.
+  #
+  # Ignoring the field is the documented fix and it does not weaken anything: git
+  # still owns the floor, the HPA still owns the operating value.
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
