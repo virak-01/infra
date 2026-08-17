@@ -215,7 +215,7 @@ kubectl get nodes -w
 
 make deploy     ENV=prod        # 1. creates the namespace, the CronJob, everything
 make app-config ENV=prod        # 2. the website-config ConfigMap
-make aws-creds  ENV=prod AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...
+make aws-creds  ENV=prod        # 3. prompts for the key; nothing enters shell history
 make ecr-secret ENV=prod        # 4. mints ecr-creds by running the CronJob
 make rollout    ENV=prod        # 5. wait for both Deployments
 

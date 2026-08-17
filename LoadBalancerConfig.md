@@ -196,7 +196,7 @@ aws ec2 associate-iam-instance-profile --region us-east-1 \
 > rather than EKS.
 
 **Static keys** — the fallback when the account does not permit role creation,
-and consistent with how `make aws-creds` already supplies ECR credentials:
+and consistent with how `script/aws-creds.sh` already supplies ECR credentials:
 
 ```sh
 kubectl -n kube-system create secret generic aws-alb-credentials \
@@ -205,7 +205,9 @@ kubectl -n kube-system create secret generic aws-alb-credentials \
 ```
 
 Never paste real keys into this file — it is committed. Supply them at the
-command line, the same way `make aws-creds` does.
+command line — `script/aws-creds.sh` avoids even that, prompting without echo and
+writing a mode-600 file rather than passing the value as a kubectl argument where it
+would be visible in `ps`.
 
 Then add `--set 'envFrom[0].secretRef.name=aws-alb-credentials'` to the Helm
 command below. The key names are the ones the AWS SDK reads directly, so no

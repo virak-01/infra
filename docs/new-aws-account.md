@@ -292,7 +292,7 @@ kubectl config current-context             # confirm the target cluster
 
 make cluster                               # 1. cluster add-ons (skip on EKS — see the warning)
 make deploy     ENV=uat                    # 2. namespace, workloads, Ingress, CronJob
-make aws-creds  ENV=uat AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...
+make aws-creds  ENV=uat                    # 3. prompts for the IAM key (not echoed)
 make ecr-secret ENV=uat                    # 4. mints ecr-creds by running the CronJob now
 make app-config ENV=uat                    # 5. website-config ConfigMap + restart
 make rollout    ENV=uat                    # 6. wait for every Deployment
