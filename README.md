@@ -1,8 +1,15 @@
 # Web platform on Kubernetes
 
-Deployment manifests for a Nuxt/Nitro site and two NestJS APIs, each its own
-Deployment + Service off one shared template, with a single Ingress routing to
-all of them across two hosts. Argo CD keeps the cluster matching this repo.
+A Nuxt/Nitro site and two NestJS APIs on Kubernetes, with the AWS infrastructure
+underneath them. Each app is its own Deployment + Service off one shared template,
+with a single Ingress routing to all of them across two hosts. Terraform builds the
+cluster; Argo CD keeps it matching this repo.
+
+**Two halves, one repository.** [`terraform/`](terraform) creates the VPC, the EKS
+cluster, the registries and the certificate; [`k8s/`](k8s) is what runs on it. They
+share a handful of values — registry host, certificate ARN, VPC CIDR — and
+[`script/sync-manifests.sh`](script/sync-manifests.sh) checks them against each other
+so the two cannot drift silently.
 
 **This repo deploys images; it does not build them.** The source lives elsewhere
 and publishes to a registry; here you name a tag and the cluster pulls it.
@@ -35,9 +42,22 @@ k8s/
   cluster/              one set per CLUSTER, not per environment
     aws/                Cluster Autoscaler  (`make cluster`)
 
+terraform/
+  bootstrap/            S3 state bucket + lock table. Run once.
+  infra/                THE STACK — network, registry, dns, cluster, IRSA
+  platform/             the 4 controllers via Helm. Separate apply.
+  modules/              network · registry · dns · cluster · iam-irsa
+
 argocd/       one Application per environment
-docs/         deployment, security, Argo CD, EC2 testing
+script/       every command in the docs — `./script/help.sh`
+docs/         terraform, deployment, security, Argo CD, EC2 testing
 ```
+
+> **Terraform stops at the load balancer.** The AWS Load Balancer Controller builds
+> the ALB from the Ingress and reconciles it continuously, so nothing in `terraform/`
+> writes `aws_lb`, `aws_lb_listener` or `aws_lb_target_group` — two owners on one
+> resource means no `terraform plan` is ever empty. Terraform's job at the edge is to
+> create and *tag* the network. See [docs/terraform.md](docs/terraform.md).
 
 `k8s/base` names no cloud, no registry and no ingress controller. An Ingress
 with no class is accepted by the API server and then ignored by every
@@ -82,6 +102,9 @@ Only `k8s/overlays/*` is deployable. `k8s/base` renders images untagged on
 purpose — a tag is a release decision, so it lives in an overlay.
 
 ## Quickstart
+
+Infrastructure first, on a cluster that does not exist yet — see
+[docs/terraform.md](docs/terraform.md). With a cluster already running:
 
 ```sh
 make envs                       # what each environment is pinned to
@@ -168,6 +191,7 @@ fails any overlay that renders an untagged image, since that resolves to
 
 | Doc | Covers |
 |---|---|
+| [Terraform](docs/terraform.md) | the AWS side — ownership boundary, the three seams, run order, teardown, cost |
 | [New AWS account](docs/new-aws-account.md) | **start here on a fresh account** — bootstrap order, every hardcoded value to replace, teardown |
 | [Deployment](docs/deployment.md) | building, ECR, installing ingress-nginx, ALB, port-forward checks, worker-node placement |
 | [Security](docs/security.md) | Pod Security Standards, the two NetworkPolicies, the CNI caveat, what is still outstanding |

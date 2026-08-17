@@ -7,3 +7,33 @@
 # cluster with `make app-config`; only the .example template is committed.
 k8s/overlays/*/app-config.env
 !k8s/overlays/*/app-config.env.example
+
+# ============================================================ terraform state
+#
+# STATE IS THE HIGHEST-VALUE SECRET IN THIS REPOSITORY. It records every resource
+# attribute in cleartext — including anything marked `sensitive`, which only hides a
+# value from CLI output and never from the state file. Committing it publishes the
+# infrastructure layout and any secret that passed through a resource.
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+crash.log
+crash.*.log
+
+# Provider binaries: large, platform-specific, re-downloaded by `terraform init`.
+.terraform/
+.terraform.tfstate.lock.info
+
+# .terraform.lock.hcl IS COMMITTED and deliberately not listed above. It pins provider
+# versions and hashes so every machine and every CI run resolves identical providers.
+
+# Real tfvars hold account ids and domain names; only the examples are committed.
+terraform/**/terraform.tfvars
+*.auto.tfvars
+*.auto.tfvars.json
+!terraform/**/terraform.tfvars.example
+*.tfplan
+*.tfplan.*
+
+# Fetched at bootstrap by script/fetch-policies.sh — pinned upstream JSON, not ours.
+terraform/modules/iam-irsa/policies/alb-controller.json

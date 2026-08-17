@@ -81,3 +81,65 @@ jobs:
             fi
             echo "$images" | sed "s|^|  ok  $overlay |"
           done
+
+  terraform:
+    name: Validate terraform
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          # The wrapper intercepts stdout to expose it as a step output, which mangles
+          # multi-line plan and fmt diffs in the log.
+          terraform_wrapper: false
+
+      - name: Check formatting
+        # -check fails rather than rewriting; -diff shows what it would change, so the
+        # log says which line is wrong instead of only which file.
+        run: terraform fmt -check -recursive -diff terraform/
+
+      - name: Fetch the load balancer controller IAM policy
+        # terraform/infra references this file through a variable default, so `validate`
+        # cannot even build the graph without it. It is gitignored — pinned upstream
+        # JSON, not ours to edit — so CI fetches it the same way a developer does.
+        run: ./script/fetch-policies.sh
+
+      - name: Validate every root module
+        # -backend=false: `validate` needs the provider schemas but not the S3 backend,
+        # and configuring one would require AWS credentials CI has no reason to hold.
+        # Modules are validated through the roots that call them.
+        run: |
+          for dir in terraform/bootstrap terraform/infra terraform/platform; do
+            echo "::group::$dir"
+            terraform -chdir="$dir" init -backend=false -input=false
+            terraform -chdir="$dir" validate
+            echo "::endgroup::"
+          done
+
+      - name: Check no secret is committed
+        # A narrow, high-signal set: an access key id, a private key block, and a real
+        # tfvars file. Not a general secret scanner — those belong in a dedicated
+        # workflow — but these three are the ones this repo's layout invites.
+        run: |
+          fail=0
+          if grep -rEn 'AKIA[0-9A-Z]{16}' --include='*.tf' --include='*.tfvars*' --include='*.yaml' .; then
+            echo "::error::an AWS access key id is committed"; fail=1
+          fi
+          if grep -rEln -- '-----BEGIN [A-Z ]*PRIVATE KEY' .; then
+            echo "::error::a private key is committed"; fail=1
+          fi
+          if git ls-files | grep -E 'terraform/.*/terraform\.tfvars$'; then
+            echo "::error::a real terraform.tfvars is tracked — only .example belongs in git"; fail=1
+          fi
+          exit $fail
+
+      - name: Check the manifests agree with terraform
+        # Informational only: --check reads terraform OUTPUTS, which need state, which
+        # needs AWS credentials. It runs for real from a developer machine or from a
+        # deploy job that already has them. Listed here so the command is discoverable
+        # and so wiring it up later is one line.
+        run: |
+          echo "Run locally, where terraform state is reachable:"
+          echo "  ./script/sync-manifests.sh --check"
