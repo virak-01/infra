@@ -60,9 +60,24 @@ locals {
 }
 
 variable "lock_table_name" {
-  description = "DynamoDB table for state locking."
+  description = "DynamoDB table for state locking. Only used when create_lock_table is true."
   type        = string
   default     = "terraform-locks"
+}
+
+variable "create_lock_table" {
+  description = <<-EOT
+    Create the DynamoDB lock table.
+
+    NO LONGER NEEDED. The backends now use `use_lockfile = true`, which locks with an
+    object in the state bucket itself — Terraform deprecated `dynamodb_table` in 1.11.
+
+    Defaults to true so an account that already has the table sees no change: flipping
+    it to false would plan a destroy, and prevent_destroy below would block it. Set
+    false on a NEW account to skip the table entirely.
+  EOT
+  type        = bool
+  default     = true
 }
 
 resource "aws_s3_bucket" "state" {
@@ -133,6 +148,8 @@ resource "aws_s3_bucket_public_access_block" "state" {
 # on every version and costs nothing at this scale — drop this resource and the
 # `dynamodb_table` line in ../infra/backend.tf if you would rather not have it.
 resource "aws_dynamodb_table" "locks" {
+  count = var.create_lock_table ? 1 : 0
+
   name         = var.lock_table_name
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "LockID"
@@ -167,7 +184,8 @@ output "state_bucket" {
 }
 
 output "lock_table" {
-  value = aws_dynamodb_table.locks.name
+  description = "Null when create_lock_table is false — the backends use S3 native locking now."
+  value       = var.create_lock_table ? aws_dynamodb_table.locks[0].name : null
 }
 
 output "env_lines" {

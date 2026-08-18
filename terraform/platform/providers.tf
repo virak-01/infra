@@ -2,7 +2,7 @@
 # Backend configuration lives in backend.tf; inputs in main.tf.
 
 terraform {
-  required_version = ">= 1.5"
+  required_version = ">= 1.10" # use_lockfile in backend.tf needs 1.10+
   required_providers {
     aws = {
       source  = "hashicorp/aws"

@@ -7,6 +7,12 @@
 #     -backend-config="bucket=<other-bucket>" \
 #     -backend-config="region=<other-region>"
 #
+# THE BUCKET MUST ALREADY EXIST — the backend never creates it. If init fails with
+# "S3 bucket ... does not exist", the name here disagrees with what ../bootstrap
+# actually made. Read the real one back with:
+#
+#   aws s3 ls | grep tfstate
+#
 # ONE-TIME EDIT ON A NEW ACCOUNT. ../bootstrap names the bucket
 # k8s-tfstate-<account-id>-<region>, so fill in your account once:
 #
@@ -28,7 +34,10 @@ terraform {
     key    = "platform/terraform.tfstate"
     region = "us-east-1"
 
-    dynamodb_table = "terraform-locks"
-    encrypt        = true
+    # S3 native locking. Replaces the DynamoDB table, which Terraform deprecated in
+    # 1.11 — the lock is now an object in this same bucket, so there is one less
+    # resource to create and nothing extra to pay for.
+    use_lockfile = true
+    encrypt      = true
   }
 }
