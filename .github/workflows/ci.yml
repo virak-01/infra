@@ -111,7 +111,7 @@ jobs:
         # and configuring one would require AWS credentials CI has no reason to hold.
         # Modules are validated through the roots that call them.
         run: |
-          for dir in terraform/bootstrap terraform/infra terraform/infra-kubeadm terraform/platform; do
+          for dir in terraform/bootstrap terraform/ops-box terraform/infra terraform/infra-kubeadm terraform/platform; do
             echo "::group::$dir"
             terraform -chdir="$dir" init -backend=false -input=false
             terraform -chdir="$dir" validate

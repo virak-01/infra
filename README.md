@@ -247,7 +247,6 @@ kubeadm token create --print-join-command
 ## Then install Calico:
 kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.2/manifests/calico.yaml
 kubectl get nodes -w
-![alt text](image.png)
 
 
 # 0. prerequisite: a cluster with at least one SCHEDULABLE node,

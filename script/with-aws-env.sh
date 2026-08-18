@@ -44,7 +44,30 @@ case "$1" in -h | --help)
   ;;
 esac
 
-[ -f "$ENV_FILE" ] || die "${ENV_FILE#"${REPO_ROOT}/"} not found — copy .env.example to .env"
+# ------------------------------------------------------- no .env is sometimes right
+#
+# ON AN EC2 OPS BOX THERE IS DELIBERATELY NO .env. Credentials arrive from the instance
+# profile through IMDS, which the SDK reads on its own — nothing on disk, nothing to
+# rotate, nothing to leak. So a missing .env there is the correct state, not an error,
+# and this passes straight through rather than refusing to run.
+#
+# Detected with a 1-second IMDSv2 token request. IMDSv1 is disabled on the boxes this
+# repo builds, so the PUT is required; the short timeout keeps a laptop (where the
+# address is unroutable and the request just hangs) from waiting on it.
+if [ ! -f "$ENV_FILE" ]; then
+  if curl -sf -m 1 -X PUT "http://169.254.169.254/latest/api/token" \
+    -H "X-aws-ec2-metadata-token-ttl-seconds: 60" >/dev/null 2>&1; then
+    note "no ${ENV_FILE##*/} — using the instance profile"
+    [ "$1" = "--whoami" ] && {
+      require_cmd aws
+      aws sts get-caller-identity --output table
+      exit 0
+    }
+    exec "$@"
+  fi
+
+  die "${ENV_FILE#"${REPO_ROOT}/"} not found, and no EC2 instance profile — copy .env.example to .env"
+fi
 
 # ---------------------------------------------------------------- permissions
 #

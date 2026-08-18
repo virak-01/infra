@@ -36,7 +36,85 @@ it with `infra` swapped for `infra-kubeadm`.
 
 ---
 
+## Running from EC2 instead
+
+If you would rather not put credentials or tooling on your own machine, run everything
+from an ops box. [`terraform/ops-box`](../terraform/ops-box) builds one, and it is a
+better security posture than a laptop, not merely a convenient one:
+
+| | Laptop | Ops box |
+|---|---|---|
+| Credentials | long-lived access key in `.env` | instance profile via IMDS |
+| Lifetime | until someone revokes it | minutes, rotated automatically |
+| On disk | yes | nothing |
+| Travels | yes | no |
+| Inbound access | n/a | none — no SSH, no key pair, no open port |
+
+### Create it once, from somewhere that is not your machine
+
+It cannot be built by the Terraform it is meant to run, so this one stack goes first
+and from elsewhere. **AWS CloudShell** is the clean answer — a browser shell with your
+console credentials already loaded and nothing to install:
+
+```sh
+# in CloudShell
+git clone <your-repo-url> && cd aws-kubernetes/terraform/ops-box
+terraform init
+terraform apply
+terraform output -raw public_access_cidr_line
+```
+
+Local state here, deliberately — like `bootstrap/`. The box must outlive
+`terraform destroy` of the platform stacks, so its state cannot live in a bucket those
+stacks manage.
+
+### Connect
+
+No SSH, no key pair, no inbound rule. Session Manager tunnels through an outbound
+connection the SSM agent makes, so there is nothing listening to reach:
+
+```sh
+aws ssm start-session --target <instance-id>
+```
+
+That works from CloudShell, from the AWS console, or from anywhere with your own
+credentials — the box itself never holds a key.
+
+### Then
+
+```sh
+sudo dnf install -y git     # already present on the image
+git clone <your-repo-url> && cd aws-kubernetes
+aws sts get-caller-identity  # confirm the instance-profile role
+```
+
+**Do not create `.env` on the box, and do not create `~/.aws/credentials`.** Both would
+replace short-lived instance credentials with something worse.
+`script/with-aws-env.sh` detects the instance profile and passes straight through, so
+every command in this document works unchanged with no file present.
+
+Then continue from **Phase 1** below, skipping Phase 0 entirely — terraform, kubectl
+and the AWS CLI are already installed at pinned versions.
+
+> **One wiring step.** Put the box's Elastic IP in `public_access_cidrs` as a `/32` in
+> `terraform/infra/terraform.tfvars` — the `public_access_cidr_line` output prints the
+> exact line. Without it the ops box cannot reach the EKS API endpoint it just created.
+> The address is an EIP precisely so a stop/start does not lock the box out.
+
+### What the role can do, honestly
+
+These stacks create IAM roles and an OIDC provider. Anything that can create an IAM
+role can create one with `AdministratorAccess` and assume it, so a Terraform runner is
+**administrator-equivalent** whatever the policy says. Scoping the other services is
+still worth doing — it limits the blast radius of a mistake and documents what the
+stacks touch — but the real control is who can open a Session Manager session, which is
+governed by IAM on *your* principal rather than by anything on the box.
+
+---
+
 ## Phase 0 — Your machine
+
+*Skip this entirely if you are using the ops box above.*
 
 ```sh
 terraform -version            # >= 1.5
