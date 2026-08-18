@@ -67,7 +67,9 @@ resource "aws_iam_role" "alb_controller" {
 resource "aws_iam_policy" "alb_controller" {
   name        = "${var.cluster_name}-alb-controller"
   description = "AWS-published policy for the load balancer controller."
-  policy      = file(var.alb_controller_policy_json)
+  # path.module, so the location is relative to this module rather than to whichever
+  # directory terraform was invoked from.
+  policy = file(coalesce(var.alb_controller_policy_json, "${path.module}/policies/alb-controller.json"))
   tags        = var.tags
 }
 

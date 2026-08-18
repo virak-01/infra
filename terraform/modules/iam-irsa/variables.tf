@@ -28,16 +28,22 @@ variable "alb_controller_policy_json" {
   description = <<-EOT
     Path to the AWS-published load balancer controller IAM policy.
 
-    NOT written by hand: it is ~180 statements with specific conditions, revised
-    per controller release, and a subtly wrong copy fails at ALB-creation time
-    with an AccessDenied that names an action you did not know it needed. Fetch
-    the pinned upstream copy first:
+    NULL uses this module's own policies/alb-controller.json, resolved with
+    path.module so it is correct no matter which directory terraform runs from. A
+    plain relative path here would be resolved against the ROOT module's directory,
+    which is why the earlier default broke the moment anything ran from elsewhere.
+
+    THE FILE IS NOT IN GIT. It is upstream's, pinned, and fetched once:
 
       ./script/fetch-policies.sh
 
-    A missing file fails the plan immediately, which is the right failure.
+    Without it the plan fails at `file(...)` with "Invalid function argument" —
+    Terraform cannot even build the graph. That is deliberate: it is better than
+    attaching an empty or hand-copied policy, which fails later at ALB-creation time
+    with an AccessDenied naming an action you did not know the controller needed.
   EOT
   type        = string
+  default     = null
 }
 
 variable "tags" {

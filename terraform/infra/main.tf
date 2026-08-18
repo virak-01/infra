@@ -80,8 +80,9 @@ variable "public_access_cidrs" {
 }
 
 variable "alb_controller_policy_json" {
-  type    = string
-  default = "../modules/iam-irsa/policies/alb-controller.json"
+  description = "Override the load balancer controller IAM policy path. Null uses the module's own copy, fetched by ./script/fetch-policies.sh."
+  type        = string
+  default     = null
 }
 
 # ─── modules ───────────────────────────────────────────────────────────────────
