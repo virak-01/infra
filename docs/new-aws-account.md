@@ -299,20 +299,21 @@ state, deliberately: a stack cannot hold the bucket its own state lives in.
 ```sh
 cd terraform/bootstrap
 terraform init
-terraform apply -var="state_bucket_name=k8s-tfstate-$(aws sts get-caller-identity --query Account --output text)"
-terraform output -raw env_lines
+terraform apply                 # no -var: the name derives from your account
 ```
 
-That prints two lines. Put them in `.env`:
+Then write that bucket into every backend:
 
-```
-TF_STATE_BUCKET=k8s-tfstate-123456789012
-TF_CLI_ARGS_init=-backend-config=bucket=k8s-tfstate-123456789012
+```sh
+cd ../..
+./script/tf-backend.sh --write
 ```
 
-Nothing gets pasted into `backend.tf`. The backend blocks already carry everything that
-can be literal; `region` comes from `AWS_REGION` and `bucket` from `TF_CLI_ARGS_init`,
-because a backend block accepts no variables at all.
+A backend block accepts no variables at all — Terraform reads it before evaluating
+anything else — so the bucket has to be a literal. `tf-backend.sh` finds the bucket
+that exists, checks it is reachable, and writes it into all four files. Doing it by
+hand is what produces `InvalidBucketName` (placeholder left in) or
+`S3 bucket does not exist` (wrong name).
 
 Run once per account, never again.
 
@@ -484,13 +485,19 @@ cluster first and the load balancer, its target groups and its security group ar
 orphaned, still billing, with no Terraform record of them.
 
 ```sh
+cd "$(git rev-parse --show-toplevel)"     # -chdir is relative to HERE
+
 kubectl delete -k k8s/overlays/uat        # removes the ALB first
 kubectl delete -k k8s/overlays/prod
 kubectl -n uat get ingress                # empty before continuing
 
-./script/with-aws-env.sh terraform -chdir=terraform/platform destroy
-./script/with-aws-env.sh terraform -chdir=terraform/infra destroy
+terraform -chdir=terraform/platform destroy
+terraform -chdir=terraform/infra destroy
 ```
+
+From inside a stack directory, drop the flag and just run `terraform destroy` —
+`-chdir` resolves against your current directory, so using it there looks for
+`terraform/infra/terraform/infra`.
 
 The state bucket and lock table survive on purpose — `prevent_destroy` is set on both,
 and they are shared by every stack.

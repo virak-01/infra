@@ -94,11 +94,20 @@ resource "aws_instance" "control_plane" {
   key_name                    = var.key_name
   associate_public_ip_address = var.associate_public_ip
 
-  user_data = templatefile("${path.module}/templates/user-data.sh.tftpl", merge(local.script_vars, {
+  # GZIPPED, because EC2 caps user-data at 16 KB and this exceeds it uncompressed.
+  # The wrapper embeds both bootstrap scripts base64-encoded, and base64 inflates by a
+  # third — the control-plane document renders to ~18 KB and is rejected with
+  #
+  #   expected length of user_data to be in the range (0 - 16384)
+  #
+  # cloud-init detects the gzip magic bytes and decompresses on its own, so nothing on
+  # the instance changes. Roughly 38% of the original size, which leaves real headroom:
+  # the worker document was already at 15.5 KB, one added comment from the same failure.
+  user_data_base64 = base64gzip(templatefile("${path.module}/templates/user-data.sh.tftpl", merge(local.script_vars, {
     ROLE               = "control-plane"
     INSTALL_SCRIPT_B64 = local.install_script_b64
     ROLE_SCRIPT_B64    = base64encode(file("${local.bootstrap_dir}/control-plane.sh"))
-  }))
+  })))
 
   # Changing user-data on an existing instance does nothing — cloud-init runs once,
   # at first boot. Without this, editing a bootstrap script produces an apply that
@@ -147,11 +156,20 @@ resource "aws_instance" "worker" {
   key_name                    = var.key_name
   associate_public_ip_address = var.associate_public_ip
 
-  user_data = templatefile("${path.module}/templates/user-data.sh.tftpl", merge(local.script_vars, {
+  # GZIPPED, because EC2 caps user-data at 16 KB and this exceeds it uncompressed.
+  # The wrapper embeds both bootstrap scripts base64-encoded, and base64 inflates by a
+  # third — the control-plane document renders to ~18 KB and is rejected with
+  #
+  #   expected length of user_data to be in the range (0 - 16384)
+  #
+  # cloud-init detects the gzip magic bytes and decompresses on its own, so nothing on
+  # the instance changes. Roughly 38% of the original size, which leaves real headroom:
+  # the worker document was already at 15.5 KB, one added comment from the same failure.
+  user_data_base64 = base64gzip(templatefile("${path.module}/templates/user-data.sh.tftpl", merge(local.script_vars, {
     ROLE               = "worker"
     INSTALL_SCRIPT_B64 = local.install_script_b64
     ROLE_SCRIPT_B64    = base64encode(file("${local.bootstrap_dir}/worker.sh"))
-  }))
+  })))
 
   user_data_replace_on_change = true
 

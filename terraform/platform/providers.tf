@@ -23,16 +23,35 @@ provider "aws" {
   region = var.region
 }
 
+# ─── cluster authentication, both ways ────────────────────────────────────────
+#
+# EKS issues a short-lived token through the AWS API, so the provider needs no file.
+# kubeadm has no such endpoint — nothing in AWS knows that cluster exists — so it uses
+# the same kubeconfig kubectl does.
+#
+# Unset attributes are ignored, which is what lets one provider block serve both: on
+# EKS `config_path` is null, on kubeadm `host`/`token` are.
+#
+# If BOTH end up null the provider silently defaults to localhost:8080 and every
+# resource fails with "connection refused" — which reads as the cluster being down
+# rather than as missing configuration. Check `cluster_stack` first when you see it.
+
 provider "helm" {
   kubernetes {
-    host                   = data.aws_eks_cluster.this.endpoint
-    cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
-    token                  = data.aws_eks_cluster_auth.this.token
+    host                   = local.is_eks ? data.aws_eks_cluster.this[0].endpoint : null
+    cluster_ca_certificate = local.is_eks ? base64decode(data.aws_eks_cluster.this[0].certificate_authority[0].data) : null
+    token                  = local.is_eks ? data.aws_eks_cluster_auth.this[0].token : null
+
+    config_path    = local.is_eks ? null : pathexpand(var.kubeconfig_path)
+    config_context = local.is_eks ? null : var.kubeconfig_context
   }
 }
 
 provider "kubernetes" {
-  host                   = data.aws_eks_cluster.this.endpoint
-  cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
-  token                  = data.aws_eks_cluster_auth.this.token
+  host                   = local.is_eks ? data.aws_eks_cluster.this[0].endpoint : null
+  cluster_ca_certificate = local.is_eks ? base64decode(data.aws_eks_cluster.this[0].certificate_authority[0].data) : null
+  token                  = local.is_eks ? data.aws_eks_cluster_auth.this[0].token : null
+
+  config_path    = local.is_eks ? null : pathexpand(var.kubeconfig_path)
+  config_context = local.is_eks ? null : var.kubeconfig_context
 }

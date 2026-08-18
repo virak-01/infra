@@ -195,6 +195,7 @@ fails any overlay that renders an untagged image, since that resolves to
 
 | Doc | Covers |
 |---|---|
+| [Running Terraform](docs/running-terraform.md) | the command sequence, and every error this setup produces with its actual cause |
 | [Terraform](docs/terraform.md) | the AWS side — ownership boundary, the three seams, run order, teardown, cost |
 | [New AWS account](docs/new-aws-account.md) | **start here on a fresh account** — bootstrap order, every hardcoded value to replace, teardown |
 | [Deployment](docs/deployment.md) | building, ECR, installing ingress-nginx, ALB, port-forward checks, worker-node placement |

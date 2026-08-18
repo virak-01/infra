@@ -9,9 +9,20 @@
 # Splitting the apply removes the problem instead of working around it with
 # -target, which leaves state partially applied.
 #
+# WORKS AGAINST EITHER CLUSTER STACK. `cluster_stack` selects which one, and that
+# changes three things:
+#
+#   which state it reads   ../infra or ../infra-kubeadm
+#   how it authenticates   EKS issues a token through the AWS API; kubeadm has no such
+#                          endpoint, so the providers use your kubeconfig instead
+#   what it installs       the AWS-integrated controllers need IRSA, which only exists
+#                          on EKS. On kubeadm they default OFF and ingress-nginx
+#                          defaults ON — see the enable_* variables.
+#
 # Read in this order:
-#   1. cd ../infra    && terraform apply
-#   2. cd ../platform && terraform apply
+#   1. cd ../infra           && terraform apply     (or ../infra-kubeadm)
+#   2. get a working kubectl — `aws eks update-kubeconfig`, or fetch admin.conf
+#   3. cd ../platform        && terraform apply
 #
 # WHAT THIS INSTALLS, and why each is required rather than nice to have:
 #   aws-load-balancer-controller  builds the ALB from the Ingress. Without it the
@@ -47,40 +58,146 @@ variable "domain_filter" {
   default     = ""
 }
 
+variable "cluster_stack" {
+  description = <<-EOT
+    Which cluster stack this platform sits on: "infra" (EKS) or "infra-kubeadm".
+
+    Selects the remote state to read AND how the providers authenticate. Getting it
+    wrong shows up as "Unauthorized" from the Kubernetes API rather than as a
+    configuration error, because the provider happily builds with the wrong credentials.
+  EOT
+  type        = string
+  default     = "infra"
+
+  validation {
+    condition     = contains(["infra", "infra-kubeadm"], var.cluster_stack)
+    error_message = "cluster_stack must be \"infra\" or \"infra-kubeadm\"."
+  }
+}
+
+variable "kubeconfig_path" {
+  description = <<-EOT
+    Kubeconfig used when cluster_stack is "infra-kubeadm".
+
+    kubeadm has no AWS API that issues cluster tokens, so there is nothing for the
+    provider to call — it uses the same file kubectl does. Fetch it from the control
+    plane first, or this fails with "connection refused" against localhost:8080, which
+    is the provider's default when it has no configuration at all.
+  EOT
+  type        = string
+  default     = "~/.kube/config"
+}
+
+variable "kubeconfig_context" {
+  description = "Context within kubeconfig_path. Null uses the current-context."
+  type        = string
+  default     = null
+}
+
+# ─── which controllers to install ─────────────────────────────────────────────
+#
+# Null means "decide from cluster_stack" — see locals below. The AWS-integrated three
+# need credentials that only IRSA supplies cleanly, so they are EKS-only by default.
+# Forcing them on for kubeadm is possible but means putting AWS credentials on the node
+# role, which the egress NetworkPolicy in k8s/ deliberately blocks access to.
+
+variable "enable_alb_controller" {
+  description = "AWS Load Balancer Controller. Null = on for EKS, off for kubeadm."
+  type        = bool
+  default     = null
+}
+
+variable "enable_external_dns" {
+  description = "external-dns. Null = on for EKS, off for kubeadm."
+  type        = bool
+  default     = null
+}
+
+variable "enable_cluster_autoscaler" {
+  description = "Cluster Autoscaler. Null = on for EKS, off for kubeadm (its ASG is the node group)."
+  type        = bool
+  default     = null
+}
+
+variable "enable_ingress_nginx" {
+  description = <<-EOT
+    ingress-nginx. Null = OFF for EKS, ON for kubeadm.
+
+    The kubeadm path has no ALB controller, so this is how an Ingress gets served at
+    all. Published as a NodePort Service, which is what the worker security group's
+    30000-32767 rule admits.
+  EOT
+  type        = bool
+  default     = null
+}
+
+variable "enable_metrics_server" {
+  description = "metrics-server. On for both — every HPA reports <unknown> without it."
+  type        = bool
+  default     = true
+}
+
+variable "ingress_nginx_chart_version" {
+  description = "ingress-nginx chart version. Only used when enable_ingress_nginx resolves true."
+  type        = string
+  default     = "4.11.3"
+}
+
 variable "alb_controller_chart_version" {
   description = "Keep the controller image in step with the IAM policy fetched by script/fetch-policies.sh (LBC_VERSION)."
   type        = string
   default     = "1.8.2"
 }
 
-# ─── infra's outputs ───────────────────────────────────────────────────────────
-data "terraform_remote_state" "infra" {
+# ─── the cluster stack's outputs ──────────────────────────────────────────────
+#
+# The key is interpolated, which a data source permits — unlike a backend block, which
+# Terraform reads before evaluating anything and so cannot take variables at all.
+data "terraform_remote_state" "cluster" {
   backend = "s3"
   config = {
     bucket = var.state_bucket
-    key    = "infra/terraform.tfstate"
+    key    = "${var.cluster_stack}/terraform.tfstate"
     region = var.region
   }
 }
 
 locals {
-  cluster_name = data.terraform_remote_state.infra.outputs.cluster_name
-  irsa         = data.terraform_remote_state.infra.outputs.irsa_role_arns
+  is_eks       = var.cluster_stack == "infra"
+  cluster_name = data.terraform_remote_state.cluster.outputs.cluster_name
+
+  # try(), because infra-kubeadm has no IRSA roles to output. A direct reference would
+  # fail at plan time with "unsupported attribute" rather than degrading.
+  irsa = try(data.terraform_remote_state.cluster.outputs.irsa_role_arns, {})
+
+  # Defaults derived from the stack, overridable per release.
+  install = {
+    alb_controller     = coalesce(var.enable_alb_controller, local.is_eks)
+    external_dns       = coalesce(var.enable_external_dns, local.is_eks)
+    cluster_autoscaler = coalesce(var.enable_cluster_autoscaler, local.is_eks)
+    ingress_nginx      = coalesce(var.enable_ingress_nginx, !local.is_eks)
+    metrics_server     = var.enable_metrics_server
+  }
 }
 
-# Read live rather than from state: the cluster's CA data and endpoint are
-# attributes that can change (an endpoint update, a CA rotation) without this
-# state file being refreshed.
+# EKS ONLY. Read live rather than from state: the endpoint and CA data are attributes
+# that can change without this state file being refreshed. There is no equivalent for
+# kubeadm — no AWS API knows about that cluster — so these are skipped and the
+# providers fall back to the kubeconfig.
 data "aws_eks_cluster" "this" {
-  name = local.cluster_name
+  count = local.is_eks ? 1 : 0
+  name  = local.cluster_name
 }
 
 data "aws_eks_cluster_auth" "this" {
-  name = local.cluster_name
+  count = local.is_eks ? 1 : 0
+  name  = local.cluster_name
 }
 
 # ─── aws load balancer controller ──────────────────────────────────────────────
 resource "helm_release" "alb_controller" {
+  count = local.install.alb_controller ? 1 : 0
+
   name       = "aws-load-balancer-controller"
   repository = "https://aws.github.io/eks-charts"
   chart      = "aws-load-balancer-controller"
@@ -103,9 +220,15 @@ resource "helm_release" "alb_controller" {
     name  = "serviceAccount.name"
     value = "aws-load-balancer-controller"
   }
-  set {
-    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
-    value = local.irsa.alb_controller
+  # Only on EKS. try() above leaves local.irsa empty for kubeadm, and annotating a
+  # ServiceAccount with a role that does not exist makes the controller fail at its
+  # first AWS call rather than at install.
+  dynamic "set" {
+    for_each = try(local.irsa.alb_controller, null) != null ? [1] : []
+    content {
+      name  = "serviceAccount.annotations.eks\.amazonaws\.com/role-arn"
+      value = local.irsa.alb_controller
+    }
   }
 
   # Stated explicitly. The controller can infer both on EKS, but an inferred
@@ -130,6 +253,8 @@ resource "helm_release" "alb_controller" {
 
 # ─── external-dns ──────────────────────────────────────────────────────────────
 resource "helm_release" "external_dns" {
+  count = local.install.external_dns ? 1 : 0
+
   name       = "external-dns"
   repository = "https://kubernetes-sigs.github.io/external-dns"
   chart      = "external-dns"
@@ -144,9 +269,15 @@ resource "helm_release" "external_dns" {
     name  = "serviceAccount.name"
     value = "external-dns"
   }
-  set {
-    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
-    value = local.irsa.external_dns
+  # Only on EKS. try() above leaves local.irsa empty for kubeadm, and annotating a
+  # ServiceAccount with a role that does not exist makes the controller fail at its
+  # first AWS call rather than at install.
+  dynamic "set" {
+    for_each = try(local.irsa.external_dns, null) != null ? [1] : []
+    content {
+      name  = "serviceAccount.annotations.eks\.amazonaws\.com/role-arn"
+      value = local.irsa.external_dns
+    }
   }
 
   set {
@@ -189,6 +320,8 @@ resource "helm_release" "external_dns" {
 
 # ─── metrics-server ────────────────────────────────────────────────────────────
 resource "helm_release" "metrics_server" {
+  count = local.install.metrics_server ? 1 : 0
+
   name       = "metrics-server"
   repository = "https://kubernetes-sigs.github.io/metrics-server"
   chart      = "metrics-server"
@@ -213,6 +346,8 @@ resource "helm_release" "metrics_server" {
 # a future kubeadm cluster and never run `make cluster` against this one.
 
 resource "helm_release" "cluster_autoscaler" {
+  count = local.install.cluster_autoscaler ? 1 : 0
+
   name       = "cluster-autoscaler"
   repository = "https://kubernetes.github.io/autoscaler"
   chart      = "cluster-autoscaler"
@@ -236,9 +371,12 @@ resource "helm_release" "cluster_autoscaler" {
     name  = "rbac.serviceAccount.name"
     value = "cluster-autoscaler"
   }
-  set {
-    name  = "rbac.serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
-    value = local.irsa.autoscaler
+  dynamic "set" {
+    for_each = try(local.irsa.autoscaler, null) != null ? [1] : []
+    content {
+      name  = "rbac.serviceAccount.annotations.eks\.amazonaws\.com/role-arn"
+      value = local.irsa.autoscaler
+    }
   }
 
   # AUTO-DISCOVERY, not --nodes=2:6:<name>. A managed node group's ASG name is
@@ -265,13 +403,69 @@ resource "helm_release" "cluster_autoscaler" {
 }
 
 # ─── outputs ───────────────────────────────────────────────────────────────────
-output "installed" {
-  value = {
-    alb_controller     = helm_release.alb_controller.version
-    external_dns       = helm_release.external_dns.version
-    metrics_server     = helm_release.metrics_server.version
-    cluster_autoscaler = helm_release.cluster_autoscaler.version
+# ─── ingress-nginx ────────────────────────────────────────────────────────────
+#
+# The kubeadm path has no ALB controller, so without this an Ingress object is inert:
+# accepted by the API server, claimed by nothing, no address and no error.
+#
+# NodePort rather than LoadBalancer. Nothing on a kubeadm cluster fulfils a
+# LoadBalancer Service, so it would sit at EXTERNAL-IP <pending> forever — and the
+# worker security group already admits 30000-32767 for exactly this.
+resource "helm_release" "ingress_nginx" {
+  count = local.install.ingress_nginx ? 1 : 0
+
+  name             = "ingress-nginx"
+  repository       = "https://kubernetes.github.io/ingress-nginx"
+  chart            = "ingress-nginx"
+  version          = var.ingress_nginx_chart_version
+  namespace        = "ingress-nginx"
+  create_namespace = true
+
+  set {
+    name  = "controller.service.type"
+    value = "NodePort"
   }
+
+  # Pinned so the port survives a chart upgrade — it is in the security group rule and
+  # in every URL anyone has bookmarked.
+  set {
+    name  = "controller.service.nodePorts.http"
+    value = "30080"
+  }
+  set {
+    name  = "controller.service.nodePorts.https"
+    value = "30443"
+  }
+
+  # The real client address rather than the node's. Without it every access log and
+  # every rate limit sees kube-proxy.
+  set {
+    name  = "controller.config.use-forwarded-headers"
+    value = "true"
+  }
+
+  # Two replicas: this controller is in the path of every request, so a single one
+  # makes a node drain an outage.
+  set {
+    name  = "controller.replicaCount"
+    value = "2"
+  }
+}
+
+output "installed" {
+  description = "Chart version per controller; null for anything this stack does not install."
+  value = {
+    alb_controller     = one(helm_release.alb_controller[*].version)
+    external_dns       = one(helm_release.external_dns[*].version)
+    metrics_server     = one(helm_release.metrics_server[*].version)
+    cluster_autoscaler = one(helm_release.cluster_autoscaler[*].version)
+    ingress_nginx      = one(helm_release.ingress_nginx[*].version)
+  }
+}
+
+output "cluster_stack" {
+  description = "Which cluster stack these controllers were installed against."
+  value       = var.cluster_stack
 }
 
 output "next_steps" {

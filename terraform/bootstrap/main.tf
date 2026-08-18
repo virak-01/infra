@@ -188,30 +188,18 @@ output "lock_table" {
   value       = var.create_lock_table ? aws_dynamodb_table.locks[0].name : null
 }
 
-output "env_lines" {
-  description = "Two lines for .env. After that, `terraform init` needs no flags."
+output "next_step" {
+  description = "What to run after this stack."
   value       = <<-EOT
 
-    Add to .env:
+    State bucket ready: ${aws_s3_bucket.state.id}
 
-      TF_STATE_BUCKET=${aws_s3_bucket.state.id}
-      TF_CLI_ARGS_init=-backend-config=bucket=${aws_s3_bucket.state.id}
+    Write it into every backend, then use the stacks:
 
-    Then:
+      ./script/tf-backend.sh --write
+      cd terraform/infra && terraform init && terraform apply
 
-      ./script/with-aws-env.sh terraform -chdir=terraform/infra init
-
-    NOTHING TO PASTE INTO backend.tf. The backend blocks under terraform/ already carry
-    everything that can be literal — the state key, the lock table, encryption. They
-    deliberately omit two values:
-
-      region   read from AWS_REGION / AWS_DEFAULT_REGION, so the backend and the
-               provider cannot disagree about which account they are working in.
-      bucket   has no environment fallback in the S3 backend, which is what
-               TF_CLI_ARGS_init above is for.
-
-    The explicit form, if you prefer nothing implicit:
-
-      terraform -chdir=terraform/infra init -backend-config="bucket=${aws_s3_bucket.state.id}"
+    A backend block takes no variables, so the bucket has to be a literal in
+    backend.tf — that script puts it there and checks the bucket is reachable first.
   EOT
 }

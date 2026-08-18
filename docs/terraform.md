@@ -193,26 +193,22 @@ with an `AccessDenied` naming an action you did not know the controller needed.
 ```sh
 cd terraform/bootstrap
 terraform init
-terraform apply -var="state_bucket_name=terraform-state-$(aws sts get-caller-identity --query Account --output text)"
-terraform output -raw env_lines     # two lines to add to .env
+terraform apply                 # no -var: the name derives from your account
 ```
 
-Local state here, and that is deliberate: a stack cannot hold the bucket its own state
-lives in.
+Then point every backend at it:
 
-**Nothing gets pasted into `backend.tf`.** The backend blocks already carry everything
-that can be literal — the state key, the lock table, encryption — and deliberately omit
-two values:
+```sh
+cd ../..
+./script/tf-backend.sh --write
+```
 
-| | Where it comes from |
-|---|---|
-| `region` | `AWS_REGION` / `AWS_DEFAULT_REGION`, which the S3 backend reads natively. A literal here could disagree with the provider, and state would be read from one account's bucket while resources were created in another. |
-| `bucket` | `TF_CLI_ARGS_init` in `.env` — the backend has no environment fallback for it. Terraform appends that string to every `init`, so plain `terraform init` then works with no flags. |
+The backend blocks carry a literal bucket and region, because a backend block accepts
+no variables at all — Terraform reads it before evaluating anything else. `-backend-config`
+overrides either value per command. Locking uses `use_lockfile = true` (an object in
+the same bucket), which replaced the DynamoDB table Terraform deprecated in 1.11.
 
-A backend block accepts **no variables and no interpolation** at all: Terraform reads it
-before evaluating variables, locals or providers, so `region = var.region` fails with
-"Variables may not be used here". Supplying values from outside is the only mechanism
-there is.
+Full command sequence and every error this produces: [running-terraform.md](running-terraform.md).
 
 ### 2 — the AWS stack
 
