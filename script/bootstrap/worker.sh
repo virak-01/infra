@@ -21,6 +21,37 @@ AWS_REGION="${AWS_REGION:-__AWS_REGION__}"
 JOIN_WAIT_SECONDS="${JOIN_WAIT_SECONDS:-1200}"
 JOIN_POLL_INTERVAL="${JOIN_POLL_INTERVAL:-15}"
 
+# See the same guard in control-plane.sh. A placeholder here means the git copy is
+# being run directly, which installs containerd on whatever machine you are on and
+# then fails at the apt repository URL minutes later.
+for _v in K8S_MINOR JOIN_PARAM AWS_REGION; do
+  if [[ "${!_v}" == __*__ ]]; then
+    echo "ERROR: ${_v} is unsubstituted (${!_v})." >&2
+
+    # The two causes look identical from inside the script and have different fixes,
+    # so tell them apart by whether this machine was ever rendered by Terraform.
+    if [[ -f /etc/profile.d/k8s-bootstrap-env.sh ]]; then
+      cat >&2 <<'EOF'
+
+  This machine HAS the values — they are in /etc/profile.d/k8s-bootstrap-env.sh.
+  Plain `sudo` discards the environment and never sources /etc/profile.d, so the
+  defaults above stayed in place. Use a login shell:
+
+      sudo -i
+      /opt/k8s-bootstrap/worker.sh
+EOF
+    else
+      cat >&2 <<'EOF'
+
+  No /etc/profile.d/k8s-bootstrap-env.sh here, so this machine is not a node
+  Terraform built — you are on the wrong host. This script installs containerd
+  and kubeadm and will make an ops box look like a cluster node.
+EOF
+    fi
+    exit 1
+  fi
+done
+
 LOG=/var/log/k8s-bootstrap.log
 exec > >(tee -a "$LOG") 2>&1
 
