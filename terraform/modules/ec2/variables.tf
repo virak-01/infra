@@ -173,9 +173,11 @@ variable "join_token_ttl" {
   description = <<-EOT
     Lifetime of the bootstrap token, as a Go duration.
 
-    Short on purpose: a token is a credential that enrols a node, so it should stop
-    working long before anyone finds the parameter. 24h covers a normal apply plus
-    troubleshooting; scripts/join-worker.sh mints a fresh one for later additions.
+    Must outlast every retry, not just the first attempt — the node bootstrap is a
+    systemd unit that retries every minute, so a short TTL turns a slow start into a
+    permanent failure loop against a credential that can never work again.
+
+    Later additions mint their own:  kubeadm token create --print-join-command
   EOT
   type        = string
   default     = "24h"
@@ -185,6 +187,37 @@ variable "node_user" {
   description = "Login user on the AMI, which receives a copy of the kubeconfig. \"ubuntu\" on Canonical images."
   type        = string
   default     = "ubuntu"
+}
+
+variable "wait_for_nodes" {
+  description = <<-EOT
+    Block `terraform apply` until every node reports Ready, and FAIL the apply if they
+    do not.
+
+    On by default because the alternative is worse than it sounds: without it an apply
+    reports success as soon as EC2 accepts RunInstances, which is before kubeadm init,
+    before the CNI, and before any worker has joined. A cluster that never formed is
+    then indistinguishable from one that did until someone runs kubectl.
+
+    Needs the aws CLI on the machine running Terraform, and ssm:SendCommand plus
+    ssm:GetCommandInvocation for whoever is running it. Set false in an environment
+    where the Terraform principal deliberately has no SSM access — the cluster still
+    builds, you just find out about failures later.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "wait_for_nodes_timeout" {
+  description = <<-EOT
+    Seconds to wait for all nodes before failing the apply.
+
+    A normal bring-up is 6-8 minutes. 1200 leaves room for a slow package mirror
+    without waiting out a control plane that has genuinely failed — and a timeout here
+    prints the control plane's own bootstrap log rather than just the elapsed time.
+  EOT
+  type        = number
+  default     = 1200
 }
 
 variable "tags" {

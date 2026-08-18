@@ -58,7 +58,11 @@ locals {
   # The scripts `source` install-containerd.sh from their own directory, so
   # user-data has to lay it down next to them before running. Written to a stable
   # path so a later manual re-run finds it in the same place.
-  install_script_b64 = base64encode(local.shared_install_script)
+  #
+  # Embedded as PLAIN TEXT inside a quoted heredoc, not base64. base64 inflates by a
+  # third and leaves the result incompressible, which was costing roughly 3 KB of the
+  # 16 KB EC2 allows once gzip had run.
+  install_script = local.shared_install_script
 }
 
 # ─── the join param ────────────────────────────────────────────────────────────
@@ -94,19 +98,19 @@ resource "aws_instance" "control_plane" {
   key_name                    = var.key_name
   associate_public_ip_address = var.associate_public_ip
 
-  # GZIPPED, because EC2 caps user-data at 16 KB and this exceeds it uncompressed.
-  # The wrapper embeds both bootstrap scripts base64-encoded, and base64 inflates by a
-  # third — the control-plane document renders to ~18 KB and is rejected with
+  # GZIPPED, because EC2 caps user-data at 16 KB and this document embeds two whole
+  # shell scripts. Uncompressed it is ~22 KB and is rejected with
   #
   #   expected length of user_data to be in the range (0 - 16384)
   #
   # cloud-init detects the gzip magic bytes and decompresses on its own, so nothing on
-  # the instance changes. Roughly 38% of the original size, which leaves real headroom:
-  # the worker document was already at 15.5 KB, one added comment from the same failure.
+  # the instance changes. Currently ~9.9 KB for this role and ~8.7 KB for a worker, so
+  # there is roughly 6 KB of room for the bootstrap scripts to grow. If that ever runs
+  # out, the next step is fetching the scripts from S3 at boot instead of embedding.
   user_data_base64 = base64gzip(templatefile("${path.module}/templates/user-data.sh.tftpl", merge(local.script_vars, {
     ROLE               = "control-plane"
-    INSTALL_SCRIPT_B64 = local.install_script_b64
-    ROLE_SCRIPT_B64    = base64encode(file("${local.bootstrap_dir}/control-plane.sh"))
+    INSTALL_SCRIPT     = local.install_script
+    ROLE_SCRIPT        = file("${local.bootstrap_dir}/control-plane.sh")
   })))
 
   # Changing user-data on an existing instance does nothing — cloud-init runs once,
@@ -156,19 +160,19 @@ resource "aws_instance" "worker" {
   key_name                    = var.key_name
   associate_public_ip_address = var.associate_public_ip
 
-  # GZIPPED, because EC2 caps user-data at 16 KB and this exceeds it uncompressed.
-  # The wrapper embeds both bootstrap scripts base64-encoded, and base64 inflates by a
-  # third — the control-plane document renders to ~18 KB and is rejected with
+  # GZIPPED, because EC2 caps user-data at 16 KB and this document embeds two whole
+  # shell scripts. Uncompressed it is ~22 KB and is rejected with
   #
   #   expected length of user_data to be in the range (0 - 16384)
   #
   # cloud-init detects the gzip magic bytes and decompresses on its own, so nothing on
-  # the instance changes. Roughly 38% of the original size, which leaves real headroom:
-  # the worker document was already at 15.5 KB, one added comment from the same failure.
+  # the instance changes. Currently ~9.9 KB for this role and ~8.7 KB for a worker, so
+  # there is roughly 6 KB of room for the bootstrap scripts to grow. If that ever runs
+  # out, the next step is fetching the scripts from S3 at boot instead of embedding.
   user_data_base64 = base64gzip(templatefile("${path.module}/templates/user-data.sh.tftpl", merge(local.script_vars, {
     ROLE               = "worker"
-    INSTALL_SCRIPT_B64 = local.install_script_b64
-    ROLE_SCRIPT_B64    = base64encode(file("${local.bootstrap_dir}/worker.sh"))
+    INSTALL_SCRIPT     = local.install_script
+    ROLE_SCRIPT        = file("${local.bootstrap_dir}/worker.sh")
   })))
 
   user_data_replace_on_change = true
@@ -201,4 +205,38 @@ resource "aws_instance" "worker" {
     aws_instance.control_plane,
     aws_ssm_parameter.join_command,
   ]
+}
+
+# ─── did it actually work? ─────────────────────────────────────────────────────
+#
+# WHAT THIS RESOURCE IS FOR. Everything above finishes when the EC2 API accepts the
+# calls. That is the last thing Terraform can observe, and it happens BEFORE any of
+# the work that can fail: kubeadm init, the CNI apply, five workers fetching a token
+# and joining. So without this, `Apply complete! 8 added` is equally consistent with a
+# healthy six-node cluster and with six machines that never formed one — which is
+# precisely the failure this stack is prone to, and the one that is hardest to notice.
+#
+# It runs ./script/wait-for-nodes.sh, which asks the control plane over SSM. No
+# kubeconfig, no 6443 access, no security-group entry for whoever runs Terraform.
+#
+# triggers_replace on the instance ids: a rebuilt cluster is re-verified, an unchanged
+# one is not re-checked on every plan.
+resource "terraform_data" "wait_for_nodes" {
+  count = var.wait_for_nodes ? 1 : 0
+
+  triggers_replace = [
+    aws_instance.control_plane.id,
+    join(",", aws_instance.worker[*].id),
+  ]
+
+  provisioner "local-exec" {
+    interpreter = ["/bin/bash", "-c"]
+    command     = <<-EOT
+      ${path.module}/../../../script/wait-for-nodes.sh \
+        --instance ${aws_instance.control_plane.id} \
+        --expect ${var.worker_count + 1} \
+        --region ${data.aws_region.current.name} \
+        --timeout ${var.wait_for_nodes_timeout}
+    EOT
+  }
 }

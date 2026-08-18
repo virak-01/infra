@@ -150,7 +150,7 @@ fi
 #
 # Minted fresh on every run rather than reused. `kubeadm token create` with a TTL
 # means a leaked parameter stops working: after TOKEN_TTL the token is refused and
-# a new worker needs a new one (scripts/join-worker.sh mints it on demand).
+# a new worker needs a new one:  kubeadm token create --print-join-command
 #
 # --print-join-command emits the token AND the CA certificate hash. The hash is what
 # lets a joining node verify the API server it is trusting, so a join command

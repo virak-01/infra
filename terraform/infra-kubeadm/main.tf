@@ -191,12 +191,46 @@ variable "join_token_ttl" {
   description = <<-EOT
     Bootstrap token lifetime, as a Go duration.
 
-    MUST COVER THE SLOWEST WORKER. Joins normally happen around six minutes in, so 1h
-    leaves generous margin for a slow package mirror. Adding a node later mints a fresh
-    token rather than relying on this one still being valid.
+    MUST OUTLAST EVERY RETRY, not just the first attempt. Joins normally happen around
+    six minutes in, and 1h looks generous against that — but the node bootstrap is a
+    systemd unit that retries every minute until it succeeds, so a worker blocked on a
+    genuinely slow control plane can still be trying an hour later. It then fetches a
+    token that has expired, fails, and retries forever against a credential that will
+    never work again. A short TTL converts a temporary problem into a permanent one.
+
+    24h is long enough that no retry outlives it. The token is a SecureString readable
+    only by the worker role, so the cost of the longer window is small next to a
+    cluster that silently never forms.
+
+    Adding a node after this expires needs a fresh token, minted on the control plane:
+
+      sudo kubeadm token create --ttl 1h --print-join-command
   EOT
   type        = string
-  default     = "1h"
+  default     = "24h"
+}
+
+variable "wait_for_nodes" {
+  description = <<-EOT
+    Make `terraform apply` mean "the cluster works", not "the instances exist".
+
+    With this on, the apply blocks until worker_count + 1 nodes report Ready and FAILS
+    if they do not, printing the control plane's bootstrap log. With it off, apply
+    finishes the moment EC2 accepts RunInstances — minutes before kubeadm init, the
+    CNI, or any worker join — so a cluster that never formed still reports success.
+
+    Requires the aws CLI where Terraform runs, plus ssm:SendCommand and
+    ssm:GetCommandInvocation. Nothing about the cluster changes if you turn it off;
+    only when you find out.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "wait_for_nodes_timeout" {
+  description = "Seconds before the readiness wait gives up. Normal bring-up is 6-8 minutes."
+  type        = number
+  default     = 1200
 }
 
 variable "domain_name" {
@@ -314,6 +348,10 @@ module "ec2" {
   cni_manifest_url            = var.cni_manifest_url
   join_command_parameter_name = local.join_command_parameter_name
   join_token_ttl              = var.join_token_ttl
+
+  # Turns a successful apply into a claim about the CLUSTER rather than about EC2.
+  wait_for_nodes         = var.wait_for_nodes
+  wait_for_nodes_timeout = var.wait_for_nodes_timeout
 
   tags = local.common_tags
 }

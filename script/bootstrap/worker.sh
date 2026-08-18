@@ -114,8 +114,10 @@ done
 
 if [[ -z "$JOIN_COMMAND" ]]; then
   log "ERROR: no join command after ${JOIN_WAIT_SECONDS}s."
-  log "  Check the control plane:  sudo tail -50 /var/log/k8s-bootstrap.log"
-  log "  Then join manually:       scripts/join-worker.sh"
+  log "  The control plane never published one. Check it:"
+  log "    aws ssm start-session --target <control-plane-id>"
+  log "    sudo journalctl -u k8s-bootstrap.service -n 50"
+  log "  Exiting non-zero so k8s-bootstrap.timer retries in a minute."
   exit 1
 fi
 
@@ -134,9 +136,12 @@ if bash -c "${JOIN_COMMAND}"; then
   log "joined"
 else
   log "ERROR: kubeadm join failed. Common causes:"
-  log "  * token expired      — mint a new one with scripts/join-worker.sh"
-  log "  * 6443 unreachable   — check the control-plane security group"
+  log "  * token expired      — on the control plane:"
+  log "        sudo kubeadm token create --ttl 24h --print-join-command"
+  log "        aws ssm put-parameter --name ${JOIN_PARAM} --type SecureString --overwrite --value <that>"
+  log "  * 6443 unreachable   — check api_allowed_cidrs and the control-plane security group"
   log "  * clock skew         — token validation is time-sensitive"
+  log "  Exiting non-zero so k8s-bootstrap.timer retries in a minute."
   exit 1
 fi
 
