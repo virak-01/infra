@@ -13,11 +13,13 @@
 #
 #   aws s3 ls | grep tfstate
 #
-# ONE-TIME EDIT ON A NEW ACCOUNT. ../bootstrap names the bucket
-# k8s-tfstate-<account-id>-<region>, so fill in your account once:
+# ON A DIFFERENT ACCOUNT, point this at that account's bucket:
 #
-#   ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-#   sed -i "s/<ACCOUNT_ID>/$ACCOUNT/" terraform/*/backend.tf
+#   ./script/tf-backend.sh --write        # discovers it and writes it here
+#
+# or by hand, from the repo root:
+#
+#   sed -i -E 's|(bucket[[:space:]]*=[[:space:]]*")[^"]*(")|\1<name>\2|' terraform/*/backend.tf
 #
 # A backend block accepts no variables and no interpolation — Terraform reads it before
 # evaluating anything else — so a literal plus an override flag is the only mechanism
@@ -30,7 +32,7 @@
 
 terraform {
   backend "s3" {
-    bucket = "k8s-tfstate-<ACCOUNT_ID>-us-east-1"
+    bucket = "k8s-tfstate-866409326838"
     key    = "infra/terraform.tfstate"
     region = "us-east-1"
 

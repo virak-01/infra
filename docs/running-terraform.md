@@ -176,6 +176,31 @@ so comments there consume the budget. There is comfortable headroom now, but it 
 unlimited — if you hit this again, the next step is fetching the scripts from S3 at
 boot rather than embedding them.
 
+### `InvalidKeyPair.NotFound: The key pair 'x' does not exist`
+
+`key_name` in `terraform.tfvars` names an EC2 key pair that is not in this account or
+this region. Key pairs are regional — one created in `us-west-2` is invisible from
+`us-east-1`.
+
+It fails at `RunInstances`, so the VPC, subnets and security groups are already built.
+Nothing needs cleaning up; fix the value and re-apply.
+
+`key_name = null` is the shipped default and needs no key at all — the node roles carry
+`AmazonSSMManagedInstanceCore`, so Session Manager reaches any node:
+
+```sh
+aws ssm start-session --target "$(terraform output -raw control_plane_instance_id)"
+```
+
+To use SSH, create the pair first — Terraform deliberately does not, because a key pair
+resource puts the private key in state:
+
+```sh
+aws ec2 create-key-pair --key-name company-kubeadm \
+  --query KeyMaterial --output text > ~/.ssh/company-kubeadm.pem
+chmod 600 ~/.ssh/company-kubeadm.pem
+```
+
 ### `Error acquiring the state lock`
 
 A previous apply died holding the lock. Inspect before breaking it:

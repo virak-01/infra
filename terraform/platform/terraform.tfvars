@@ -25,7 +25,7 @@ cluster_stack = "infra"
 
 # From `cd ../bootstrap && terraform output -raw state_bucket`. This stack reads
 # infra/'s outputs out of the same bucket.
-state_bucket = "k8s-tfstate-<ACCOUNT_ID>-us-east-1"
+state_bucket = "k8s-tfstate-866409326838"
 
 # NOT OPTIONAL IN PRACTICE. external-dns runs with policy=sync, which means it
 # DELETES records it believes are orphaned. An empty filter makes every hosted

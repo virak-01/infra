@@ -104,7 +104,12 @@ terraform apply                                  # ~3 min for AWS, ~6 more insid
 still running. Watch it:
 
 ```sh
+# with key_name set:
 ssh ubuntu@$(terraform output -raw control_plane_public_ip) 'sudo tail -f /var/log/k8s-bootstrap.log'
+
+# with key_name = null (the default) — no key, no open port 22:
+aws ssm start-session --target "$(terraform output -raw control_plane_instance_id)"
+#   then, in the session:  sudo tail -f /var/log/k8s-bootstrap.log
 kubectl get nodes -w        # expect 1 control-plane + 5 workers
 ```
 

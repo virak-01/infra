@@ -38,13 +38,29 @@ instance_type               = "t3.medium"
 control_plane_instance_type = "t3.large"
 root_volume_size            = 40
 
-# An EXISTING key pair name, without .pem. Create one first:
+# SSH KEY PAIR — null by default, and that is deliberate.
+#
+# A named key pair that does not exist in your account fails the apply at RunInstances:
+#
+#   InvalidKeyPair.NotFound: The key pair 'x' does not exist
+#
+# and it does so AFTER the VPC, subnets and security groups are built — eight minutes
+# in, for a value that could have been checked in one. null avoids that entirely.
+#
+# You are not locked out. ../modules/iam-node attaches AmazonSSMManagedInstanceCore to
+# both node roles, so Session Manager reaches any node with no key, no open port 22 and
+# no public IP required:
+#
+#   aws ssm start-session --target $(terraform output -raw control_plane_instance_id)
+#
+# TO USE SSH INSTEAD, create the pair FIRST and then set the name here:
+#
 #   aws ec2 create-key-pair --key-name company-kubeadm \
 #     --query KeyMaterial --output text > ~/.ssh/company-kubeadm.pem
 #   chmod 600 ~/.ssh/company-kubeadm.pem
 #
-# null relies on Session Manager instead, which is enabled on both node roles.
-key_name = "company-kubeadm"
+# Terraform does not create it: a key pair resource puts the PRIVATE KEY in state.
+key_name = null
 
 # ------------------------------------------------------------------- kubernetes
 kubernetes_version = "1.31"
