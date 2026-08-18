@@ -13,16 +13,24 @@ kind: Kustomization
 resources:
   - ../../base
 
-# THE CLOUD, matching ../prod — both environments are served by the ALB. Base is
-# cloud-neutral and this is what makes the render deployable on AWS: ALB
-# annotations, NodePort Services, the ECR pull-secret refresh job.
+# THE CLOUD, matching ../prod. Base is cloud-neutral and this is what makes the
+# render deployable on AWS: the ingress class, the ECR pull-secret refresh job.
+#
+# MUST MATCH THE TERRAFORM STACK THAT BUILT THE CLUSTER:
+#
+#   ../../components/aws-kubeadm   terraform/infra-kubeadm — ingress-nginx, NodePort
+#   ../../components/aws           terraform/infra (EKS)   — an ALB, IRSA-authenticated
+#
+# The ALB controller needs IRSA, which only EKS has, so on this stack it is not
+# installed and `ingressClassName: alb` would be claimed by nothing — the Ingress
+# would sit without an address and no controller would log why.
 #
 # The two share a cluster and must agree on the ingress class, so this line and
 # ../prod/kustomization.yaml's change together or not at all. Swapping only one
-# to ../../components/ingress-nginx leaves two controllers claiming hosts in one
-# cluster, resolved by creation order and never logged.
+# leaves two controllers claiming hosts in one cluster, resolved by creation order
+# and never logged.
 components:
-  - ../../components/aws
+  - ../../components/aws-kubeadm
 
 # The environment. This is the only place it is declared: the base deliberately
 # sets no namespace, so this value both stamps every resource below and renames

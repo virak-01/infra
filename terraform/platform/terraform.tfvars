@@ -1,5 +1,3 @@
-# Copy to terraform.tfvars and edit.
-
 region = "us-east-1"
 
 # WHICH CLUSTER THESE CONTROLLERS SIT ON.
@@ -10,10 +8,12 @@ region = "us-east-1"
 #                    providers use kubeconfig_path below — get kubectl working first.
 #                    IRSA does not exist there, so the ALB controller, external-dns and
 #                    the autoscaler default OFF and ingress-nginx defaults ON.
-cluster_stack = "infra"
+cluster_stack = "infra-kubeadm"
 
-# Only used when cluster_stack = "infra-kubeadm".
-# kubeconfig_path    = "~/.kube/config"
+# Only used when cluster_stack = "infra-kubeadm". The providers authenticate with this
+# file, so `kubectl get nodes` must work from THIS machine before `terraform apply`
+# here — the plan itself reads the cluster.
+kubeconfig_path = "~/.kube/config"
 # kubeconfig_context = null
 
 # Override any default: null means "decide from cluster_stack".

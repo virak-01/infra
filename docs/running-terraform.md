@@ -201,6 +201,36 @@ aws ec2 create-key-pair --key-name company-kubeadm \
 chmod 600 ~/.ssh/company-kubeadm.pem
 ```
 
+### The instance already exists and I have no key for it
+
+**A key pair cannot be added to a running instance.** AWS injects the public key exactly
+once, at first boot, through cloud-init — there is no API to attach one afterwards, and
+setting `key_name` and re-applying would *replace* the instance.
+
+Use Session Manager, which needs no key:
+
+```sh
+aws ssm start-session --target "$(terraform output -raw control_plane_instance_id)"
+sudo su - ubuntu        # sessions land as ssm-user
+```
+
+If the console's Session Manager tab is greyed out, the instance has no instance
+profile — which is what happens when it was created by hand rather than by this stack:
+
+```sh
+aws ssm describe-instance-information \
+  --query "InstanceInformationList[].{Id:InstanceId,Ping:PingStatus}" --output table
+
+aws ec2 associate-iam-instance-profile \
+  --instance-id i-0abc123 --iam-instance-profile Name=<profile>
+```
+
+To get SSH onto a node that is already running, append the key from inside a session:
+
+```sh
+sudo -u ubuntu tee -a /home/ubuntu/.ssh/authorized_keys <<< "ssh-ed25519 AAAA... you@laptop"
+```
+
 ### `Error acquiring the state lock`
 
 A previous apply died holding the lock. Inspect before breaking it:

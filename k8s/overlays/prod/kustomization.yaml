@@ -9,15 +9,23 @@ resources:
 # deployable on AWS: ALB annotations, NodePort Services, the ECR pull-secret
 # refresh job.
 #
-# Swap it for ../../components/ingress-nginx to serve this environment from an
-# in-cluster controller instead. Exactly one edge component, and ../uat must
-# agree: the two share a cluster, and two ingress classes claiming the same
-# hosts is resolved by whichever object was created first, silently.
+# MUST MATCH THE TERRAFORM STACK THAT BUILT THE CLUSTER:
+#
+#   ../../components/aws-kubeadm   terraform/infra-kubeadm — ingress-nginx, NodePort
+#   ../../components/aws           terraform/infra (EKS)   — an ALB, IRSA-authenticated
+#
+# The ALB controller authenticates with IRSA, which only EKS provides, so on the
+# kubeadm stack it is not installed and `ingressClassName: alb` is claimed by
+# nothing — the Ingress sits without an address and no controller logs why.
+#
+# Exactly one edge component, and ../uat must agree: the two share a cluster, and
+# two ingress classes claiming the same hosts is resolved by whichever object was
+# created first, silently.
 #
 # It lives here rather than in the Makefile because Argo CD renders this file
 # straight from git and never runs make.
 components:
-  - ../../components/aws
+  - ../../components/aws-kubeadm
 
 namespace: prod
 images:

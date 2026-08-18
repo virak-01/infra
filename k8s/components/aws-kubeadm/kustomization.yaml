@@ -1,0 +1,37 @@
+# AWS, with the cluster's own ingress controller — the pairing for terraform/infra-kubeadm.
+#
+# The sibling of ../aws, and the two differ on exactly one axis. Both run on AWS and
+# both pull from ECR; what changes is who terminates the request:
+#
+#   ../aws          registry-ecr + ingress-alb      an ALB the controller creates
+#   this component  registry-ecr + ingress-nginx    ingress-nginx on a NodePort
+#
+# WHY THE ALB PAIRING CANNOT BE USED HERE. The AWS Load Balancer Controller
+# authenticates with IRSA, which is an EKS feature — the OIDC provider is part of the
+# managed control plane. A kubeadm cluster has no such provider, so terraform/platform
+# defaults that controller OFF and ingress-nginx ON. An overlay left on ../aws against
+# this stack renders `ingressClassName: alb`, and nothing in the cluster claims it: the
+# Ingress is created, stays without an address forever, and no controller logs a reason.
+#
+# Traffic therefore enters at a worker's public address on the NodePort, not at a load
+# balancer:
+#
+#   http://<any worker public IP>:30080
+#
+# Any worker — kube-proxy forwards to wherever the controller pod actually runs. Put a
+# real load balancer or a DNS round-robin in front when one node stops being enough.
+#
+# NO NETWORKPOLICY PATCH, unlike ../ingress-alb. That component has to add the node
+# CIDR because an ALB with instance targets arrives from a node address; here the
+# request arrives from the ingress-nginx pod, and the base policy already admits the
+# ingress-nginx namespace. Nothing account-specific is left, which is why this file
+# holds no ARNs and no CIDRs and sync-manifests.sh has nothing to rewrite in it.
+#
+# NO SERVICE PATCH either — base Services are already ClusterIP, which is what an
+# in-cluster controller routes to.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+components:
+  - ../registry-ecr
+  - ../ingress-nginx
