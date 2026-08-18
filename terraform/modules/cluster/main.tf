@@ -276,14 +276,30 @@ resource "aws_eks_node_group" "this" {
 # cannot satisfy: its ASG name is generated and contains a random suffix. Switch
 # the Deployment to auto-discovery, or read the real name from the
 # `node_group_asg_names` output below.
-resource "aws_autoscaling_group_tag" "autoscaler_enabled" {
-  for_each = toset(flatten([
-    for rs in aws_eks_node_group.this.resources : [
-      for asg in rs.autoscaling_groups : asg.name
-    ]
-  ]))
+#
+# COUNT, NOT for_each — and the difference is not stylistic.
+#
+# `for_each` keys become resource addresses, so Terraform must know the full key set
+# during PLAN. The ASG name does not exist until the node group has been created, so a
+# for_each over it fails before anything is applied:
+#
+#   Invalid for_each argument … is a list of object, known only after apply
+#
+# `count` needs only a known LENGTH, and the length here is a constant: a managed node
+# group creates exactly one Auto Scaling group. The name is still unknown at plan time,
+# but that is fine — it is an attribute, not an address.
+#
+# The literal [0][0] indexing is safe for the same reason: one node group, one ASG.
+# Adding a second node group means revisiting this, and a `count` of 1 makes that
+# obvious in a way a silently-empty for_each would not.
+locals {
+  node_group_asg_name = aws_eks_node_group.this.resources[0].autoscaling_groups[0].name
+}
 
-  autoscaling_group_name = each.value
+resource "aws_autoscaling_group_tag" "autoscaler_enabled" {
+  count = 1
+
+  autoscaling_group_name = local.node_group_asg_name
 
   tag {
     key                 = "k8s.io/cluster-autoscaler/enabled"
@@ -293,13 +309,9 @@ resource "aws_autoscaling_group_tag" "autoscaler_enabled" {
 }
 
 resource "aws_autoscaling_group_tag" "autoscaler_cluster" {
-  for_each = toset(flatten([
-    for rs in aws_eks_node_group.this.resources : [
-      for asg in rs.autoscaling_groups : asg.name
-    ]
-  ]))
+  count = 1
 
-  autoscaling_group_name = each.value
+  autoscaling_group_name = local.node_group_asg_name
 
   tag {
     key                 = "k8s.io/cluster-autoscaler/${var.cluster_name}"

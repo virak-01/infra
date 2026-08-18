@@ -14,6 +14,132 @@ Six phases, roughly **40 minutes**, most of it waiting on EKS.
 
 ---
 
+## If your EC2 box is Ubuntu: install the tools first
+
+Amazon Linux 2023 ships the AWS CLI and the SSM agent. A plain Ubuntu instance has
+neither, and `terraform init` will succeed before failing on credentials — which makes
+the missing CLI easy to miss.
+
+**Do not run `sudo apt install awscli`**, which Ubuntu suggests when the command is
+missing. That package is AWS CLI **v1** — years behind, and it lacks the EKS and SSO
+support this project relies on. Install v2 from AWS:
+
+```sh
+case "$(uname -m)" in
+  x86_64)  AWS_ARCH=x86_64  ; K8S_ARCH=amd64 ;;
+  aarch64) AWS_ARCH=aarch64 ; K8S_ARCH=arm64 ;;
+esac
+
+sudo apt-get update -qq && sudo apt-get install -y -qq unzip curl
+
+curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${AWS_ARCH}.zip" -o /tmp/awscliv2.zip
+unzip -q /tmp/awscliv2.zip -d /tmp && sudo /tmp/aws/install --update
+rm -rf /tmp/aws /tmp/awscliv2.zip
+
+curl -fsSLo /tmp/kubectl "https://dl.k8s.io/release/v1.31.0/bin/linux/${K8S_ARCH}/kubectl"
+sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl && rm /tmp/kubectl
+
+aws --version            # aws-cli/2.x
+kubectl version --client
+```
+
+The arch check matters: a Graviton instance (`t4g`, `m7g`) needs the `aarch64` and
+`arm64` builds, and the x86 binaries fail there with `cannot execute binary file`.
+
+---
+
+## The simplest possible first run
+
+Everything below this section is the full path: remote state, a locked backend, two
+stacks, a controller layer. Worth having for a team. **Not worth having on day one.**
+
+To just get a cluster, skip `bootstrap/` entirely and use local state:
+
+```sh
+# 1. credentials — attach an IAM role to the EC2 box you are on (see below)
+aws sts get-caller-identity
+
+# 2. local state instead of S3. Terraform only reads *.tf, so renaming disables it.
+cd terraform/infra
+mv backend.tf backend.tf.off
+
+# 3. go
+cp terraform.tfvars.example terraform.tfvars    # set domain_name = null
+terraform init
+terraform apply                                  # ~15 min, mostly EKS
+
+# 4. talk to it
+aws eks update-kubeconfig --region us-east-1 --name "$(terraform output -raw cluster_name)"
+kubectl get nodes
+```
+
+Four steps, one stack. Then `cd ../platform` for the controllers when you want an
+Ingress to work.
+
+**What you give up**, and when it starts to matter:
+
+| | Local state | Why you would eventually want S3 |
+|---|---|---|
+| Where state lives | `terraform.tfstate` on this box | lose the box, lose the ability to change or destroy anything it built |
+| Locking | none | two concurrent applies corrupt the file |
+| Sharing | one machine only | nobody else can run a plan |
+
+None of that matters while it is one person on one box learning the shape of it. All of
+it matters the moment a second person or a CI job appears.
+
+### Storing state in S3 instead
+
+Two extra commands. Do this from the start, or migrate to it later — the steps only
+differ by one flag.
+
+```sh
+# region first: the backend reads it from the environment, and on a bare EC2 box
+# nothing has set it. Also what the CLI and provider use.
+export AWS_REGION=us-east-1
+export AWS_DEFAULT_REGION=us-east-1
+
+# 1. create the bucket and lock table. Local state, once per account.
+cd terraform/bootstrap
+terraform init
+terraform apply -var="state_bucket_name=k8s-tfstate-$(aws sts get-caller-identity --query Account --output text)"
+BUCKET=$(terraform output -raw state_bucket)
+
+# 2. point the stack at it
+cd ../infra
+terraform init -backend-config="bucket=$BUCKET"
+terraform apply
+```
+
+**If you already applied with local state**, restore the backend file and add one flag:
+
+```sh
+cd terraform/infra
+mv backend.tf.off backend.tf          # only if you renamed it earlier
+terraform init -migrate-state -backend-config="bucket=$BUCKET"
+```
+
+Terraform reads the local file, uploads it, and switches over. Answer `yes` when it
+asks to copy. Nothing is lost by having started local.
+
+Repeat the `init` line in `../platform` and `../infra-kubeadm` if you use them — each
+writes a different key in the same bucket, which is what keeps the stacks isolated.
+
+> **`export AWS_REGION` is not optional here.** The backend blocks deliberately carry
+> no literal region so they cannot disagree with the provider about which account they
+> are working in — it comes from the environment instead. On a laptop `.env` supplies
+> it; on a bare EC2 box nothing does, and `terraform init` will stop and ask. Add it to
+> `/etc/profile.d/` so it survives a new shell:
+>
+> ```sh
+> echo 'export AWS_REGION=us-east-1
+> export AWS_DEFAULT_REGION=us-east-1' | sudo tee /etc/profile.d/aws-region.sh
+> ```
+>
+> Or pass it explicitly and skip the export:
+> `terraform init -backend-config="bucket=$BUCKET" -backend-config="region=us-east-1"`
+
+---
+
 ## Decide first: which stack
 
 Both exist and build the same platform. Pick one — running both means two clusters and
@@ -36,79 +162,107 @@ it with `infra` swapped for `infra-kubeadm`.
 
 ---
 
-## Running from EC2 instead
+## Running from an EC2 box instead
 
 If you would rather not put credentials or tooling on your own machine, run everything
-from an ops box. [`terraform/ops-box`](../terraform/ops-box) builds one, and it is a
-better security posture than a laptop, not merely a convenient one:
+from an EC2 instance. That is a better security posture, not merely a convenient one:
 
-| | Laptop | Ops box |
+| | Laptop | EC2 box |
 |---|---|---|
 | Credentials | long-lived access key in `.env` | instance profile via IMDS |
 | Lifetime | until someone revokes it | minutes, rotated automatically |
 | On disk | yes | nothing |
 | Travels | yes | no |
-| Inbound access | n/a | none — no SSH, no key pair, no open port |
 
-### Create it once, from somewhere that is not your machine
+**The box needs an IAM instance profile.** Without one you get this, which looks like a
+credentials problem and is really a "no role attached" problem:
 
-It cannot be built by the Terraform it is meant to run, so this one stack goes first
-and from elsewhere. **AWS CloudShell** is the clean answer — a browser shell with your
-console credentials already loaded and nothing to install:
-
-```sh
-# in CloudShell
-git clone <your-repo-url> && cd aws-kubernetes/terraform/ops-box
-terraform init
-terraform apply
-terraform output -raw public_access_cidr_line
+```
+Error: No valid credential sources found
+failed to refresh cached credentials, no EC2 IMDS role found,
+operation error ec2imds: GetMetadata, http response error StatusCode: 404
 ```
 
-Local state here, deliberately — like `bootstrap/`. The box must outlive
-`terraform destroy` of the platform stacks, so its state cannot live in a bucket those
-stacks manage.
+A 404 there means IMDS *answered* — so the machine is EC2 — but there is no role to
+return. On a laptop the address is unroutable and you would get a timeout instead.
 
-### Connect
+### Create and attach the role
 
-No SSH, no key pair, no inbound rule. Session Manager tunnels through an outbound
-connection the SSM agent makes, so there is nothing listening to reach:
-
-```sh
-aws ssm start-session --target <instance-id>
-```
-
-That works from CloudShell, from the AWS console, or from anywhere with your own
-credentials — the box itself never holds a key.
-
-### Then
+From **AWS CloudShell** — a browser shell with your console credentials already loaded,
+so nothing has to be installed anywhere:
 
 ```sh
-sudo dnf install -y git     # already present on the image
-git clone <your-repo-url> && cd aws-kubernetes
-aws sts get-caller-identity  # confirm the instance-profile role
+cat > /tmp/trust.json <<'EOF'
+{"Version":"2012-10-17","Statement":[{"Effect":"Allow",
+ "Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}
+EOF
+
+aws iam create-role --role-name k8s-ops \
+  --assume-role-policy-document file:///tmp/trust.json
+
+aws iam attach-role-policy --role-name k8s-ops \
+  --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+aws iam attach-role-policy --role-name k8s-ops \
+  --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+aws iam create-instance-profile --instance-profile-name k8s-ops
+aws iam add-role-to-instance-profile \
+  --instance-profile-name k8s-ops --role-name k8s-ops
+
+sleep 15   # instance profiles take a few seconds to propagate; associating
+           # immediately fails with "Invalid IAM Instance Profile name"
+
+aws ec2 associate-iam-instance-profile \
+  --instance-id i-xxxxxxxx --iam-instance-profile Name=k8s-ops
 ```
 
-**Do not create `.env` on the box, and do not create `~/.aws/credentials`.** Both would
-replace short-lived instance credentials with something worse.
-`script/with-aws-env.sh` detects the instance profile and passes straight through, so
-every command in this document works unchanged with no file present.
+Get the instance id from the box itself. IMDSv2 needs a token first — a plain GET
+returns 401 where v1 is disabled:
 
-Then continue from **Phase 1** below, skipping Phase 0 entirely — terraform, kubectl
-and the AWS CLI are already installed at pinned versions.
+```sh
+TOKEN=$(curl -sX PUT http://169.254.169.254/latest/api/token \
+  -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
+  http://169.254.169.254/latest/meta-data/instance-id
+```
 
-> **One wiring step.** Put the box's Elastic IP in `public_access_cidrs` as a `/32` in
-> `terraform/infra/terraform.tfvars` — the `public_access_cidr_line` output prints the
-> exact line. Without it the ops box cannot reach the EKS API endpoint it just created.
-> The address is an EIP precisely so a stop/start does not lock the box out.
+Then, back on the box — no reboot needed, credentials appear within seconds:
 
-### What the role can do, honestly
+```sh
+aws sts get-caller-identity     # Arn should read assumed-role/k8s-ops/i-xxxx
+```
 
-These stacks create IAM roles and an OIDC provider. Anything that can create an IAM
-role can create one with `AdministratorAccess` and assume it, so a Terraform runner is
-**administrator-equivalent** whatever the policy says. Scoping the other services is
-still worth doing — it limits the blast radius of a mistake and documents what the
-stacks touch — but the real control is who can open a Session Manager session, which is
-governed by IAM on *your* principal rather than by anything on the box.
+`AdministratorAccess` is not laziness here. These stacks create IAM roles and an OIDC
+provider, and anything that can create an IAM role can create an administrator one and
+assume it — so a Terraform runner is administrator-equivalent whatever policy you
+attach. The real control is who can reach the box.
+
+### On the box
+
+**Do not create `.env`, and do not create `~/.aws/credentials`.** Either would replace
+short-lived rotating credentials with something worse.
+[`script/with-aws-env.sh`](../script/with-aws-env.sh) detects the instance profile and
+passes straight through, so every command in this document works with no file present.
+
+Two things to set, because a bare instance has neither:
+
+```sh
+export AWS_REGION=us-east-1
+export AWS_DEFAULT_REGION=us-east-1
+```
+
+Make them stick: `echo 'export AWS_REGION=us-east-1
+export AWS_DEFAULT_REGION=us-east-1' | sudo tee /etc/profile.d/aws-region.sh`
+
+Then continue from **Phase 1**, skipping Phase 0.
+
+> **If the box has a public IP and you narrow `public_access_cidrs`**, put that address
+> in as a `/32` or the box cannot reach the EKS API endpoint it just created. Give it an
+> Elastic IP first, or a stop/start will change the address and lock you out.
+
+> **Running Terraform inside a container on that box?** The default IMDS hop limit of 1
+> stops the request at the host network namespace and produces the same 404. Raise it:
+> `aws ec2 modify-instance-metadata-options --instance-id i-xxxx --http-put-response-hop-limit 2`
 
 ---
 
