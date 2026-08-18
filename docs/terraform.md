@@ -21,20 +21,105 @@ are how the controller discovers where to put the ALB.
 
 ```
 terraform/
-  bootstrap/   S3 state bucket + lock table. Local state. Run once.
-  infra/       THE STACK — network, registry, dns, cluster, IRSA roles
-  platform/    the controllers, via Helm. Separate apply (see step 4)
+  bootstrap/       S3 state bucket + lock table. Local state. Run once.
+  infra/           THE EKS STACK — network, registry, dns, cluster, IRSA
+  infra-kubeadm/   THE KUBEADM STACK — 1 control plane + N workers on EC2
+  platform/        the controllers, via Helm. Separate apply (see step 4)
   modules/
-    network/   vpc · subnets · igw · nat · routes · THE DISCOVERY TAGS · ALB SG
-    registry/  3 ECR repos · immutable tags · lifecycle policy
-    dns/       zone · ACM cert · validation records  (no ALIAS — see below)
-    cluster/   EKS · managed node group · OIDC provider · addons
-    iam-irsa/  per-controller roles: alb-controller, external-dns, autoscaler
+    network/       vpc · subnets · igw · nat · routes · THE DISCOVERY TAGS · ALB SG
+    registry/      3 ECR repos · immutable tags · lifecycle policy   } shared
+    dns/           zone · ACM cert · validation records              } by both
+    cluster/       EKS · managed node group · OIDC · addons          ] EKS
+    iam-irsa/      alb-controller, external-dns, autoscaler roles    ] only
+    ec2/           control plane + workers · cloud-init user-data    ] kubeadm
+    security-group/ the ports kubeadm actually needs                 ] only
+    iam-node/      node instance roles, scoped to the SSM join path  ]
+script/
+  bootstrap/           control-plane.sh · worker.sh · install-containerd.sh
 script/
   fetch-policies.sh    pulls the pinned upstream ALB controller IAM policy
   sync-manifests.sh    carries outputs into k8s/ (--check for CI)
 k8s/           the manifests this infrastructure exists to run
 ```
+
+## Two stacks: EKS or kubeadm
+
+`terraform/` holds two root modules that build the same platform different ways. They
+share the `network`, `registry` and `dns` modules and keep **separate state**, so both
+can exist in one account without fighting. Pick one per cluster — running both means
+two clusters and two bills.
+
+| | [`infra/`](../terraform/infra) | [`infra-kubeadm/`](../terraform/infra-kubeadm) |
+|---|---|---|
+| Control plane | AWS runs it | you run it, on an EC2 instance |
+| Compute resources | 2 | 6 (1 + 5 workers) |
+| Node join | automatic, via the EKS API | `kubeadm join` with an SSM-delivered token |
+| Controller permissions | IRSA, per ServiceAccount | node instance role |
+| ECR pull credentials | node role — `registry-ecr` unnecessary | the `registry-ecr` CronJob is required |
+| Control-plane cost | ~$73/month | none |
+| Matches the live cluster | no — a migration target | yes |
+
+### How six machines install Kubernetes simultaneously
+
+This is the kubeadm stack's central problem, and it is worth understanding before the
+first apply. All six instances boot in parallel, so the workers reach their join step
+**minutes before** the control plane has finished `kubeadm init`. No Terraform
+construct fixes that — `depends_on` orders API calls, not software inside an instance.
+
+```
+   Terraform                Control plane                 Workers × 5
+       │                          │                             │
+       │ creates SSM parameter    │                             │
+       │ value = "PENDING"        │                             │
+       ├─────────────────────────►│                             │
+       │ RunInstances × 6, parallel                             │
+       ├──────────────┬──────────►│                             │
+       │              └──────────────────────────────────────►  │
+  t+2m │                          │ containerd, kubeadm         │ containerd, kubeadm
+  t+3m │                          │ kubeadm init                │ poll SSM ─┐
+  t+4m │                          │ apply Calico                │  every 15s │ up to
+  t+5m │                          │ token create --ttl 1h       │  ◄─────────┘ 20 min
+       │                          │ ssm put-parameter ──────────┼──►
+  t+6m │                          │◄──── kubeadm join × 5 ──────┤
+```
+
+Each worker polls with its own independent deadline, so five do not queue behind each
+other. Five concurrent joins against one API server are fine: each performs its own
+TLS bootstrap and CSR, which is what a bootstrap token exists for.
+
+**The token is never in git, in state, or in user-data.** It is minted on the control
+plane *after* the cluster exists and published to SSM as a SecureString. The
+control-plane role may write that one parameter and cannot read it back; the worker
+role may read it and cannot write. See [`modules/iam-node`](../terraform/modules/iam-node/main.tf).
+
+### Running the kubeadm stack
+
+```sh
+cd terraform/infra-kubeadm
+cp terraform.tfvars.example terraform.tfvars    # EDIT ssh_allowed_cidrs
+terraform init
+terraform apply                                  # ~3 min for AWS, ~6 more inside the nodes
+```
+
+`terraform apply` returning does **not** mean the cluster is ready — cloud-init is
+still running. Watch it:
+
+```sh
+ssh ubuntu@$(terraform output -raw control_plane_public_ip) 'sudo tail -f /var/log/k8s-bootstrap.log'
+kubectl get nodes -w        # expect 1 control-plane + 5 workers
+```
+
+If a worker misses its window, the token has usually expired by the time anyone looks.
+Mint a fresh one and join — idempotent, and it skips nodes that already joined:
+
+```sh
+./script/bootstrap/worker.sh          # on the node itself, or:
+kubectl get nodes                     # confirm which are missing
+```
+
+Changing the worker count is one line in `terraform.tfvars`; the security groups need
+no edit because they reference each other **by security group, not by IP address**, so
+new nodes are covered the moment they launch.
 
 ## Why there is no `envs/uat` and `envs/prod`
 
@@ -66,9 +151,38 @@ Roughly 25 minutes end to end, most of it EKS creating the control plane.
 
 ```sh
 terraform -version      # >= 1.5
-aws sts get-caller-identity
 ./script/fetch-policies.sh
 ```
+
+### Credentials
+
+Terraform's AWS provider uses the standard credential chain, so anything that already
+works for the `aws` CLI works here. If you keep them in `.env`:
+
+```sh
+cp .env.example .env            # then fill it in
+./script/with-aws-env.sh --whoami
+```
+
+**Nothing reads `.env` automatically** — not Terraform, not the `aws` CLI, not bash. A
+correctly-filled `.env` has no effect until something exports it, which is what
+[`script/with-aws-env.sh`](../script/with-aws-env.sh) does:
+
+```sh
+./script/with-aws-env.sh terraform -chdir=terraform/infra plan
+```
+
+It scopes the credentials to that one process rather than leaving them in your shell
+for the rest of the session. The equivalent by hand is `set -a; . ./.env; set +a`.
+
+> **The variable names are not arbitrary.** The SDK reads `AWS_ACCESS_KEY_ID` and
+> `AWS_SECRET_ACCESS_KEY` and nothing else — `AWS_KEY` / `AWS_SECRET` are silently
+> ignored, so Terraform falls through to `~/.aws/credentials` and either uses the
+> wrong account or fails with "no valid credential sources found". A `.env` with the
+> wrong names is indistinguishable from no `.env` at all.
+>
+> A named profile (`AWS_PROFILE`) is preferable to static keys, and is the only option
+> that works with SSO. See [`.env.example`](../.env.example).
 
 `fetch-policies.sh` downloads the AWS-published load balancer controller IAM
 policy. It is not inline HCL because it is ~180 statements with specific conditions,
@@ -81,11 +195,25 @@ with an `AccessDenied` naming an action you did not know the controller needed.
 cd terraform/bootstrap
 terraform init
 terraform apply -var="state_bucket_name=terraform-state-$(aws sts get-caller-identity --query Account --output text)"
-terraform output backend_block      # paste into ../infra/backend.tf and ../platform/backend.tf
+terraform output -raw env_lines     # two lines to add to .env
 ```
 
-Local state here, and that is deliberate: a stack cannot hold the bucket its own
-state lives in.
+Local state here, and that is deliberate: a stack cannot hold the bucket its own state
+lives in.
+
+**Nothing gets pasted into `backend.tf`.** The backend blocks already carry everything
+that can be literal — the state key, the lock table, encryption — and deliberately omit
+two values:
+
+| | Where it comes from |
+|---|---|
+| `region` | `AWS_REGION` / `AWS_DEFAULT_REGION`, which the S3 backend reads natively. A literal here could disagree with the provider, and state would be read from one account's bucket while resources were created in another. |
+| `bucket` | `TF_CLI_ARGS_init` in `.env` — the backend has no environment fallback for it. Terraform appends that string to every `init`, so plain `terraform init` then works with no flags. |
+
+A backend block accepts **no variables and no interpolation** at all: Terraform reads it
+before evaluating variables, locals or providers, so `region = var.region` fails with
+"Variables may not be used here". Supplying values from outside is the only mechanism
+there is.
 
 ### 2 — the AWS stack
 

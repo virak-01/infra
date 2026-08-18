@@ -21,16 +21,21 @@ set -euo pipefail
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") (--check | --write)
+Usage: $(basename "$0") (--check | --write) [--stack <name>]
 
-  --check   report disagreements between terraform state and the overlays; exit 1 if any
-  --write   rewrite the overlays from terraform outputs
+  --check          report disagreements between terraform and the overlays; exit 1 if any
+  --write          rewrite the overlays from terraform outputs
+  --stack <name>   which root module to read (default: infra)
+                     infra           the EKS stack
+                     infra-kubeadm   the kubeadm stack
 
-Reads terraform/infra outputs, so that stack must have been applied first.
+Both stacks export a \`kustomize_values\` output of the same shape, deliberately, so
+this works against either without knowing which built the cluster.
 EOF
 }
 
 MODE=""
+STACK="${STACK:-infra}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --check)
@@ -39,6 +44,15 @@ while [ $# -gt 0 ]; do
       ;;
     --write)
       MODE=write
+      shift
+      ;;
+    --stack)
+      [ $# -ge 2 ] || die "--stack needs a value"
+      STACK="$2"
+      shift 2
+      ;;
+    --stack=*)
+      STACK="${1#*=}"
       shift
       ;;
     -h | --help)
@@ -54,16 +68,26 @@ done
   exit 2
 }
 
-require_cmd terraform
-TF_DIR="${REPO_ROOT}/terraform/infra"
-[ -d "$TF_DIR" ] || die "terraform/infra not found"
+# The local check first, deliberately. A typo'd --stack is the faster thing to fix and
+# needs no tooling, so reporting "terraform is not installed" ahead of it would name
+# the wrong problem.
+TF_DIR="${REPO_ROOT}/terraform/${STACK}"
+[ -d "$TF_DIR" ] || {
+  printf '%sERROR: no such stack: %s%s\n' "$C_RED" "$STACK" "$C_OFF" >&2
+  # A root module is a directory holding a backend.tf. That excludes modules/, which
+  # is shared library code and cannot be applied.
+  printf '  available: %s\n' "$(cd "${REPO_ROOT}/terraform" && ls */backend.tf 2>/dev/null | xargs -n1 dirname | tr '\n' ' ')" >&2
+  exit 1
+}
 
-info "terraform : terraform/infra"
+require_cmd terraform
+
+info "terraform : terraform/${STACK}"
 info "manifests : k8s/"
 echo
 
 values="$(terraform -chdir="$TF_DIR" output -json kustomize_values 2>/dev/null)" \
-  || die "could not read terraform output — has terraform/infra been applied?"
+  || die "could not read terraform output — has terraform/${STACK} been applied?"
 
 # Parsed with python rather than jq: jq is not installed everywhere, python3 is on
 # every machine this repo already depends on.

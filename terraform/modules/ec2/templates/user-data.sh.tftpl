@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# cloud-init user-data for a ${ROLE} node. RENDERED BY TERRAFORM — do not edit a
+# copy of this on an instance; edit kubernetes/bootstrap/*.sh instead.
+#
+# This wrapper does three things and no more:
+#   1. writes the bootstrap scripts to disk, so they survive for a manual re-run
+#   2. exports the non-secret values Terraform substituted
+#   3. runs the role script
+#
+# The scripts arrive base64-encoded because user-data is passed as a single shell
+# document: an unencoded script containing heredocs, quotes and $-expansions would
+# be mangled by the outer shell before it ever reached a file.
+#
+# NOTHING SECRET IS IN HERE. user-data is readable through IMDS by any process on
+# the instance, including every container, so a join token placed here would be
+# readable cluster-wide. Only a parameter NAME appears; the token is minted on the
+# node and passed through SSM. See terraform/modules/iam.
+set -euo pipefail
+
+exec > >(tee -a /var/log/user-data.log) 2>&1
+echo "[$(date -u +%FT%TZ)] user-data starting for role ${ROLE}"
+
+# The AWS CLI is required by both roles — the control plane writes the join command
+# to SSM and workers read it. Ubuntu's cloud images do not ship it.
+if ! command -v aws >/dev/null 2>&1; then
+  echo "installing awscli"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+  apt-get install -y -qq unzip curl
+  cd /tmp
+  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
+  unzip -q awscliv2.zip
+  ./aws/install --update
+  rm -rf /tmp/aws /tmp/awscliv2.zip
+fi
+
+BOOTSTRAP_DIR=/opt/k8s-bootstrap
+mkdir -p "$BOOTSTRAP_DIR"
+
+# install-containerd.sh must sit beside the role script: both `source` it by
+# dirname of their own path.
+echo "${INSTALL_SCRIPT_B64}" | base64 -d >"$BOOTSTRAP_DIR/install-containerd.sh"
+echo "${ROLE_SCRIPT_B64}" | base64 -d >"$BOOTSTRAP_DIR/${ROLE}.sh"
+chmod +x "$BOOTSTRAP_DIR"/*.sh
+
+# Exported rather than substituted into the scripts, so the on-disk copies stay
+# identical to the ones in git and remain runnable by hand.
+export K8S_MINOR="${K8S_MINOR}"
+export POD_CIDR="${POD_CIDR}"
+export JOIN_PARAM="${JOIN_PARAM}"
+export AWS_REGION="${AWS_REGION}"
+export CNI_MANIFEST_URL="${CNI_MANIFEST_URL}"
+export TOKEN_TTL="${TOKEN_TTL}"
+export NODE_USER="${NODE_USER}"
+
+# Also written to a profile file so a later SSH session can re-run the script
+# without working out the values again.
+cat >/etc/profile.d/k8s-bootstrap-env.sh <<PROFILE
+export K8S_MINOR="${K8S_MINOR}"
+export POD_CIDR="${POD_CIDR}"
+export JOIN_PARAM="${JOIN_PARAM}"
+export AWS_REGION="${AWS_REGION}"
+export CNI_MANIFEST_URL="${CNI_MANIFEST_URL}"
+export TOKEN_TTL="${TOKEN_TTL}"
+export NODE_USER="${NODE_USER}"
+PROFILE
+chmod 0644 /etc/profile.d/k8s-bootstrap-env.sh
+
+echo "[$(date -u +%FT%TZ)] running ${ROLE}.sh"
+"$BOOTSTRAP_DIR/${ROLE}.sh"
+
+echo "[$(date -u +%FT%TZ)] user-data complete"

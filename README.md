@@ -44,12 +44,16 @@ k8s/
 
 terraform/
   bootstrap/            S3 state bucket + lock table. Run once.
-  infra/                THE STACK — network, registry, dns, cluster, IRSA
+  infra/                EKS — AWS runs the control plane
+  infra-kubeadm/        kubeadm — 1 control-plane EC2 + 5 workers, parallel bootstrap
   platform/             the 4 controllers via Helm. Separate apply.
-  modules/              network · registry · dns · cluster · iam-irsa
+  modules/              network · registry · dns  (shared)
+                        cluster · iam-irsa        (EKS)
+                        ec2 · security-group · iam-node  (kubeadm)
 
 argocd/       one Application per environment
 script/       every command in the docs — `./script/help.sh`
+  bootstrap/            cloud-init scripts for the kubeadm nodes
 docs/         terraform, deployment, security, Argo CD, EC2 testing
 ```
 
@@ -200,8 +204,20 @@ fails any overlay that renders an untagged image, since that resolves to
 
 ## Requirements
 
-`kubectl` (1.27+, for the built-in kustomize), `docker`, and a cluster with an
-ingress controller. `kubeconform` is optional and only needed for `make validate`.
+`kubectl` (1.27+, for the built-in kustomize) and a cluster with an ingress
+controller. `kubeconform` is optional and only needed for `make validate`.
+
+For the `terraform/` half: Terraform 1.5+, the `aws` CLI, and credentials. Copy
+`.env.example` to `.env` and check they resolve:
+
+```sh
+cp .env.example .env
+./script/with-aws-env.sh --whoami
+```
+
+`.env` is gitignored. Nothing reads it automatically — `script/with-aws-env.sh` loads
+it for one command rather than leaving credentials in your shell. See
+[docs/terraform.md](docs/terraform.md#credentials).
 
 ## Show all nodes port
 kubectl -n kube-system get pods

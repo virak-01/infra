@@ -67,6 +67,21 @@ variable "az_count" {
   }
 }
 
+variable "enable_nat_gateway" {
+  description = <<-EOT
+    Create NAT gateways so the private subnets have outbound internet.
+
+    TRUE for EKS, which is why it defaults that way: nodes there sit in private
+    subnets and cannot pull an image or reach the control plane without it.
+
+    FALSE for the kubeadm path (../../infra-kubeadm), where nodes sit in PUBLIC
+    subnets with public IPs and reach the internet through the internet gateway
+    directly. Roughly USD 32/month for a gateway nothing routes through.
+  EOT
+  type        = bool
+  default     = true
+}
+
 variable "single_nat_gateway" {
   description = <<-EOT
     true  — one NAT gateway shared by every private subnet (~$32/mo, one AZ of
@@ -109,7 +124,7 @@ locals {
   public_cidrs  = [for i in range(var.az_count) : cidrsubnet(var.vpc_cidr, 4, i)]
   private_cidrs = [for i in range(var.az_count) : cidrsubnet(var.vpc_cidr, 4, i + 8)]
 
-  nat_count = var.single_nat_gateway ? 1 : var.az_count
+  nat_count = var.enable_nat_gateway ? (var.single_nat_gateway ? 1 : var.az_count) : 0
 }
 
 # ------------------------------------------------------------------------- vpc
@@ -227,7 +242,9 @@ resource "aws_route_table" "private" {
 }
 
 resource "aws_route" "private_default" {
-  count = var.az_count
+  # No NAT means no default route out of the private subnets — and no resource that
+  # would reference aws_nat_gateway.this[0], which does not exist.
+  count = var.enable_nat_gateway ? var.az_count : 0
 
   route_table_id         = aws_route_table.private[count.index].id
   destination_cidr_block = "0.0.0.0/0"

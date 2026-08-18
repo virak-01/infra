@@ -1,4 +1,4 @@
-# Remote state for EKS — the EKS stack.
+# Remote state for KUBEADM — the kubeadm stack.
 #
 # A BACKEND BLOCK TAKES NO VARIABLES. Terraform reads this before it evaluates
 # variables, locals or providers, so `region = var.region` fails outright with
@@ -9,7 +9,7 @@
 # environment — AWS_REGION or AWS_DEFAULT_REGION — exactly like the provider does. Your
 # .env sets both, so loading it is enough:
 #
-#   ./script/with-aws-env.sh terraform -chdir=terraform/infra init
+#   ./script/with-aws-env.sh terraform -chdir=terraform/infra-kubeadm init
 #
 # Hard-coding it here would mean the backend and the provider could disagree about the
 # region, and state would be read from one account's bucket while resources were
@@ -22,7 +22,7 @@
 #                                 `terraform init` just works. This is the shipped path.
 #
 #   explicitly on the command line, if you prefer nothing implicit:
-#     terraform -chdir=terraform/infra init -backend-config="bucket=$TF_STATE_BUCKET"
+#     terraform -chdir=terraform/infra-kubeadm init -backend-config="bucket=$TF_STATE_BUCKET"
 #
 # Get the value once from:
 #   terraform -chdir=terraform/bootstrap output -raw state_bucket
@@ -34,7 +34,7 @@
 
 terraform {
   backend "s3" {
-    key = "infra/terraform.tfstate"
+    key = "infra-kubeadm/terraform.tfstate"
 
     # Constants, the same for every stack.
     dynamodb_table = "terraform-locks"
