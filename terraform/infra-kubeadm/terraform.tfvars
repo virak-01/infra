@@ -32,15 +32,22 @@ az_count = 3
 # own address whenever you like; nothing in this stack depends on 22 being reachable.
 ssh_allowed_cidrs = ["0.0.0.0/0"]
 
-# REPLACE WITH YOUR OWN ADDRESS — this is the port that matters.
+# OPEN, chosen deliberately. Behind this port is kube-apiserver: authenticated,
+# anonymous auth off, but the single control point for the cluster — whoever reaches
+# it AND holds admin.conf owns everything running here.
 #
-# Behind it is kube-apiserver: authenticated, anonymous auth off, but the single
-# control point for the cluster. Whoever reaches it AND holds admin.conf owns
-# everything running here.
+# Open because the operator address is an ISP-assigned one that changes, and every
+# change silently breaks kubectl and `terraform apply` in ../platform (both talk to
+# 6443) until someone re-applies a security-group rule.
 #
-# It must include wherever you run kubectl and `terraform apply` in ../platform. Left
-# null it would inherit the line above and be open to the internet.
-api_allowed_cidrs = ["203.0.113.0/24"] # REPLACE  ->  curl -s https://checkip.amazonaws.com
+# To narrow it again, one line — no instances are touched, it is a rule change:
+#
+#   api_allowed_cidrs = ["<your-address>/32"]   # curl -s https://checkip.amazonaws.com
+#
+# Better still, put that in local.auto.tfvars, which is gitignored and loaded
+# automatically: an operator's address is a property of their machine, not of this
+# repository, and committing one locks out everybody else.
+api_allowed_cidrs = ["0.0.0.0/0"]
 
 # The ingress controller's NodePort. Open, because this is the edge that serves real
 # traffic — there is no ALB in front of it on this stack. Narrow it to a load
@@ -48,8 +55,29 @@ api_allowed_cidrs = ["203.0.113.0/24"] # REPLACE  ->  curl -s https://checkip.am
 nodeport_allowed_cidrs = ["0.0.0.0/0"]
 
 # ---------------------------------------------------------------------- compute
-# ONE control plane, FIVE workers — all six bootstrap simultaneously.
-worker_count = 5
+# ONE control plane, THREE workers — all four bootstrap simultaneously.
+#
+# TEMPORARILY 3, NOT 5. A new AWS account caps Standard on-demand instances at 16
+# vCPU, and five workers do not fit:
+#
+#   control plane t3.large   2
+#   5 x worker    t3.medium  10
+#   the ops box              2
+#                            -- 14, plus anything else running
+#
+#   Error: VcpuLimitExceeded: You have requested more vCPU capacity than your
+#   current vCPU limit of 16 allows for the instance bucket ...
+#
+# Shrinking the instance TYPE does not help: every t3 size from nano to large is
+# 2 vCPU, so only the count moves the total.
+#
+# Raise the quota, then put this back to 5:
+#
+#   aws service-quotas request-service-quota-increase --service-code ec2 \
+#     --quota-code L-1216C47A --desired-value 64 --region us-east-1
+#
+# Going 3 -> 5 later adds two workers and leaves the running three alone.
+worker_count = 3
 
 # The control plane is deliberately larger: every kubelet watches its API server and
 # every change writes to its etcd, so its load scales with the node count while a
@@ -91,9 +119,13 @@ pod_cidr = "192.168.0.0/16"
 
 cni_manifest_url = "https://raw.githubusercontent.com/projectcalico/calico/v3.28.2/manifests/calico.yaml"
 
-# Must outlast the SLOWEST worker's bootstrap. Joins normally land around six minutes
-# in; 1h is generous margin for a slow package mirror.
-join_token_ttl = "1h"
+# Must outlast every RETRY, not just the first attempt. Joins normally land around six
+# minutes in, which makes 1h look generous — but the bootstrap is a systemd unit that
+# retries every minute until it succeeds, so a worker blocked on a slow control plane
+# can still be trying an hour later. It then fetches an expired token, fails, and
+# retries forever against a credential that can never work again. A short TTL turns a
+# temporary problem into a permanent one.
+join_token_ttl = "24h"
 
 # --------------------------------------------------------------------------- dns
 # null skips the zone and certificate entirely, and the ALB is then reachable by its
