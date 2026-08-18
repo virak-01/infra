@@ -137,14 +137,30 @@ variable "key_name" {
 
 variable "ssh_allowed_cidrs" {
   description = <<-EOT
-    CIDRs allowed to reach SSH (22) and the Kubernetes API (6443).
+    CIDRs allowed to reach SSH (22).
 
-    NO DEFAULT. A default is either 0.0.0.0/0, which silently exposes both to the
-    internet, or someone else's address. The module also rejects 0.0.0.0/0 outright.
+    NO DEFAULT. A default is either 0.0.0.0/0, which silently exposes SSH to the
+    internet, or someone else's address.
+
+    Also the fallback for api_allowed_cidrs and nodeport_allowed_cidrs when those are
+    null, so widening this widens them too unless they are set explicitly.
 
     Find yours:  curl -s https://checkip.amazonaws.com
   EOT
   type        = list(string)
+}
+
+variable "api_allowed_cidrs" {
+  description = <<-EOT
+    CIDRs allowed to reach the Kubernetes API (6443). Null inherits ssh_allowed_cidrs.
+
+    Worth setting on its own: kubectl needs this open from wherever you run it, which
+    is rarely the same answer as who should reach SSH. This is also the port that
+    terraform/platform talks to — its providers read the cluster at PLAN time, so an
+    unreachable API fails the plan, not the apply.
+  EOT
+  type        = list(string)
+  default     = null
 }
 
 variable "nodeport_allowed_cidrs" {
@@ -250,6 +266,7 @@ module "security_group" {
   name_prefix            = local.name_prefix
   vpc_id                 = module.network.vpc_id
   ssh_allowed_cidrs      = var.ssh_allowed_cidrs
+  api_allowed_cidrs      = var.api_allowed_cidrs
   nodeport_allowed_cidrs = var.nodeport_allowed_cidrs
   pod_cidr               = var.pod_cidr
 

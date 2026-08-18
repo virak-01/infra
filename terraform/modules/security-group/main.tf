@@ -9,7 +9,12 @@
 # it did not create, so a rule added by a controller or by hand disappears on the
 # next apply with no warning.
 
+# Both fall back to ssh_allowed_cidrs when unset, which is how this module behaved when
+# one variable gated all three. The fallback is the compatibility path, not the
+# recommendation: widening SSH then widens whatever still inherits from it, silently.
+# Set them explicitly and that coupling disappears.
 locals {
+  api_cidrs      = var.api_allowed_cidrs != null ? var.api_allowed_cidrs : var.ssh_allowed_cidrs
   nodeport_cidrs = var.nodeport_allowed_cidrs != null ? var.nodeport_allowed_cidrs : var.ssh_allowed_cidrs
 }
 
@@ -45,7 +50,7 @@ resource "aws_vpc_security_group_ingress_rule" "cp_ssh" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "cp_api_admin" {
-  for_each = toset(var.ssh_allowed_cidrs)
+  for_each = toset(local.api_cidrs)
 
   security_group_id = aws_security_group.control_plane.id
   description       = "kube-apiserver for kubectl from an operator machine"

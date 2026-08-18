@@ -1,11 +1,13 @@
-# Copy to terraform.tfvars and edit. tfvars files are gitignored.
-#
 # ============================================================================
-# EDIT ssh_allowed_cidrs BEFORE THE FIRST APPLY.
+# THREE SEPARATE ANSWERS. They were one variable until SSH was opened here and
+# quietly took the API server and the NodePort range with it.
 #
-# 203.0.113.0/24 is reserved for documentation (RFC 5737) and routes nowhere, so an
-# unedited copy FAILS CLOSED — you will not be able to SSH or reach the API server.
-# That is deliberate: 0.0.0.0/0 fails OPEN, and the security-group module rejects it.
+#   ssh_allowed_cidrs       22          who may attempt SSH
+#   api_allowed_cidrs       6443        who may talk to kube-apiserver
+#   nodeport_allowed_cidrs  30000-32767 who may reach the ingress controller
+#
+# Null on the latter two still inherits the first, so leaving them null keeps the old
+# coupling. Set them.
 #
 #   curl -s https://checkip.amazonaws.com
 # ============================================================================
@@ -24,8 +26,26 @@ vpc_cidr = "10.40.0.0/16"
 az_count = 3
 
 # --------------------------------------------------------------------- security
-ssh_allowed_cidrs      = ["203.0.113.0/24"] # REPLACE
-nodeport_allowed_cidrs = null               # null = same as ssh_allowed_cidrs
+# OPEN, as asked. Note what this does and does not buy: with key_name = null there is
+# no key on any instance and sshd rejects passwords, so nobody can log in through this
+# port — it admits scanners and fills auth.log, and grants nothing. Narrow it to your
+# own address whenever you like; nothing in this stack depends on 22 being reachable.
+ssh_allowed_cidrs = ["0.0.0.0/0"]
+
+# REPLACE WITH YOUR OWN ADDRESS — this is the port that matters.
+#
+# Behind it is kube-apiserver: authenticated, anonymous auth off, but the single
+# control point for the cluster. Whoever reaches it AND holds admin.conf owns
+# everything running here.
+#
+# It must include wherever you run kubectl and `terraform apply` in ../platform. Left
+# null it would inherit the line above and be open to the internet.
+api_allowed_cidrs = ["203.0.113.0/24"] # REPLACE  ->  curl -s https://checkip.amazonaws.com
+
+# The ingress controller's NodePort. Open, because this is the edge that serves real
+# traffic — there is no ALB in front of it on this stack. Narrow it to a load
+# balancer's security group once one exists.
+nodeport_allowed_cidrs = ["0.0.0.0/0"]
 
 # ---------------------------------------------------------------------- compute
 # ONE control plane, FIVE workers — all six bootstrap simultaneously.
