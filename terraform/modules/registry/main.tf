@@ -11,60 +11,6 @@
 # only for clusters without that provider and should be dropped from the overlays
 # here.
 
-terraform {
-  required_version = ">= 1.5"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.70"
-    }
-  }
-}
-
-variable "repositories" {
-  description = <<-EOT
-    Repository names. Must match the `newName:` suffixes in both overlays —
-    website (serves /), core (/api) and auth (/api/auth, /api/health).
-  EOT
-  type        = list(string)
-  default     = ["website", "core", "auth"]
-}
-
-variable "immutable_tags" {
-  description = <<-EOT
-    IMMUTABLE rejects a push that reuses an existing tag.
-
-    Worth the friction. The manifests repo's rule is never reuse a tag, because
-    nodes cache layers — so one tag can mean two different images across the
-    fleet, and a rollback to it lands somewhere undefined. This makes that a
-    push-time error instead of a mystery later.
-  EOT
-  type        = bool
-  default     = true
-}
-
-variable "untagged_expiry_days" {
-  description = "Delete untagged images after this many days. They are unreferenced layers from overwritten or failed pushes."
-  type        = number
-  default     = 7
-}
-
-variable "keep_tagged_images" {
-  description = <<-EOT
-    How many tagged images to retain per repository.
-
-    This is a rollback horizon, not a storage setting: an image expired from here
-    cannot be rolled back to, however far back the git history goes.
-  EOT
-  type        = number
-  default     = 30
-}
-
-variable "tags" {
-  type    = map(string)
-  default = {}
-}
-
 resource "aws_ecr_repository" "this" {
   for_each = toset(var.repositories)
 
@@ -115,14 +61,4 @@ resource "aws_ecr_lifecycle_policy" "this" {
       },
     ]
   })
-}
-
-output "repository_urls" {
-  description = "Map of repo name to pull URL. The overlays' `newName:` values."
-  value       = { for k, v in aws_ecr_repository.this : k => v.repository_url }
-}
-
-output "registry_host" {
-  description = "The <acct>.dkr.ecr.<region>.amazonaws.com prefix shared by all repos."
-  value       = length(var.repositories) > 0 ? split("/", values(aws_ecr_repository.this)[0].repository_url)[0] : ""
 }

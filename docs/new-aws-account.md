@@ -64,7 +64,6 @@ cd terraform/infra
 mv backend.tf backend.tf.off
 
 # 3. go
-cp terraform.tfvars.example terraform.tfvars    # set domain_name = null
 terraform init
 terraform apply                                  # ~15 min, mostly EKS
 
@@ -89,25 +88,33 @@ it matters the moment a second person or a CI job appears.
 
 ### Storing state in S3 instead
 
-Two extra commands. Do this from the start, or migrate to it later — the steps only
-differ by one flag.
+One extra stack, then plain `terraform init` and `terraform apply` everywhere.
 
 ```sh
-# region first: the backend reads it from the environment, and on a bare EC2 box
-# nothing has set it. Also what the CLI and provider use.
 export AWS_REGION=us-east-1
 export AWS_DEFAULT_REGION=us-east-1
 
-# 1. create the bucket and lock table. Local state, once per account.
+# one-time: put your account id into the backend files
+ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+sed -i "s/<ACCOUNT_ID>/$ACCOUNT/" terraform/*/backend.tf
+
+# create the bucket and lock table. Once per account.
 cd terraform/bootstrap
 terraform init
-terraform apply -var="state_bucket_name=k8s-tfstate-$(aws sts get-caller-identity --query Account --output text)"
-BUCKET=$(terraform output -raw state_bucket)
+terraform apply                 # no -var: the name derives from your account
 
-# 2. point the stack at it
+# every stack after this needs no flags
 cd ../infra
-terraform init -backend-config="bucket=$BUCKET"
+terraform init
 terraform apply
+```
+
+The bucket name is `k8s-tfstate-<account-id>-<region>`, derived in `bootstrap` and
+written literally into each `backend.tf` — which is what keeps `init` bare. Override
+per command when it differs:
+
+```sh
+terraform init -backend-config="bucket=<other>" -backend-config="region=<other>"
 ```
 
 **If you already applied with local state**, restore the backend file and add one flag:
@@ -115,30 +122,16 @@ terraform apply
 ```sh
 cd terraform/infra
 mv backend.tf.off backend.tf          # only if you renamed it earlier
-terraform init -migrate-state -backend-config="bucket=$BUCKET"
+terraform init -migrate-state
 ```
 
 Terraform reads the local file, uploads it, and switches over. Answer `yes` when it
 asks to copy. Nothing is lost by having started local.
 
-Repeat the `init` line in `../platform` and `../infra-kubeadm` if you use them — each
-writes a different key in the same bucket, which is what keeps the stacks isolated.
-
-> **`export AWS_REGION` is not optional here.** The backend blocks deliberately carry
-> no literal region so they cannot disagree with the provider about which account they
-> are working in — it comes from the environment instead. On a laptop `.env` supplies
-> it; on a bare EC2 box nothing does, and `terraform init` will stop and ask. Add it to
-> `/etc/profile.d/` so it survives a new shell:
->
-> ```sh
-> echo 'export AWS_REGION=us-east-1
-> export AWS_DEFAULT_REGION=us-east-1' | sudo tee /etc/profile.d/aws-region.sh
-> ```
->
-> Or pass it explicitly and skip the export:
-> `terraform init -backend-config="bucket=$BUCKET" -backend-config="region=us-east-1"`
-
----
+> **If `bootstrap` already has state under a different bucket name**, plain `apply` now
+> plans to replace the bucket and `prevent_destroy` stops it. That is the guard working.
+> You do not need to run bootstrap again — the bucket exists. Read its name back with
+> `terraform output -raw state_bucket` and use that.
 
 ## Decide first: which stack
 
@@ -329,14 +322,14 @@ Run once per account, never again.
 
 ```sh
 cd ../infra
-cp terraform.tfvars.example terraform.tfvars
 ```
 
-Edit three things:
+`terraform.tfvars` is committed, so it works as shipped. Three values are worth
+reviewing before you apply:
 
 | Variable | Why |
 |---|---|
-| `domain_name` | `null` skips DNS and TLS entirely — fine for a first run. If you set it, see the note below. |
+| `domain_name` | ships as `null`, which skips DNS and TLS entirely. Set a real domain only when you own one. |
 | `public_access_cidrs` | narrow it. The default leaves the Kubernetes API endpoint reachable from the internet — authenticated, but reachable. |
 | `cluster_name` | anything; it prefixes every resource. |
 
@@ -373,7 +366,6 @@ that does not exist during the first plan.
 
 ```sh
 cd ../platform
-cp terraform.tfvars.example terraform.tfvars    # set state_bucket and domain_filter
 ./script/with-aws-env.sh terraform init
 ./script/with-aws-env.sh terraform apply
 

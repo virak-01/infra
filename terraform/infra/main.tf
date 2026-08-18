@@ -16,36 +16,7 @@
 # Environment separation is enforced in Kubernetes, not here: namespaces,
 # NetworkPolicies, and separate Argo CD Applications.
 
-terraform {
-  required_version = ">= 1.5"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.70"
-    }
-    tls = {
-      source  = "hashicorp/tls"
-      version = "~> 4.0"
-    }
-  }
-}
-
-provider "aws" {
-  region = var.region
-
-  # Applied to every taggable resource. `Stack` is what lets you find or clean up
-  # everything this state file owns without reading the state.
-  default_tags {
-    tags = {
-      ManagedBy = "terraform"
-      Stack     = "aws-kubernetes"
-      Cluster   = var.cluster_name
-    }
-  }
-}
-
-# ----------------------------------------------------------------------- inputs
-
+# ─── inputs ────────────────────────────────────────────────────────────────────
 variable "region" {
   type    = string
   default = "us-east-1"
@@ -113,8 +84,7 @@ variable "alb_controller_policy_json" {
   default = "../modules/iam-irsa/policies/alb-controller.json"
 }
 
-# ---------------------------------------------------------------------- modules
-
+# ─── modules ───────────────────────────────────────────────────────────────────
 module "network" {
   source = "../modules/network"
 
@@ -176,7 +146,7 @@ module "iam_irsa" {
   alb_controller_policy_json = var.alb_controller_policy_json
 }
 
-# --------------------------------------------------------------------- outputs
+# ─── outputs ───────────────────────────────────────────────────────────────────
 #
 # Everything below is a value the MANIFESTS repo hardcodes today. Kustomize cannot
 # read Terraform state, so these have to be carried across — see the

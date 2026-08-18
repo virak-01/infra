@@ -19,17 +19,8 @@
 # parameter and cannot read it back; workers can read and cannot write. Neither can
 # touch any other parameter, because both policies name this one path.
 
-terraform {
-  required_version = ">= 1.5"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.70"
-    }
-  }
-}
-
 data "aws_caller_identity" "current" {}
+
 data "aws_region" "current" {}
 
 locals {
@@ -56,8 +47,7 @@ data "aws_iam_policy_document" "ec2_assume" {
   }
 }
 
-# ============================================================ control plane
-
+# ─── control plane ─────────────────────────────────────────────────────────────
 resource "aws_iam_role" "control_plane" {
   name_prefix        = "${var.name_prefix}-cp-"
   description        = "Kubernetes control-plane node. Writes the join command to SSM."
@@ -117,8 +107,7 @@ resource "aws_iam_instance_profile" "control_plane" {
   tags        = var.tags
 }
 
-# =================================================================== workers
-
+# ─── workers ───────────────────────────────────────────────────────────────────
 resource "aws_iam_role" "worker" {
   name_prefix        = "${var.name_prefix}-worker-"
   description        = "Kubernetes worker node. Reads the join command from SSM."

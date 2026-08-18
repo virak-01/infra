@@ -96,7 +96,6 @@ role may read it and cannot write. See [`modules/iam-node`](../terraform/modules
 
 ```sh
 cd terraform/infra-kubeadm
-cp terraform.tfvars.example terraform.tfvars    # EDIT ssh_allowed_cidrs
 terraform init
 terraform apply                                  # ~3 min for AWS, ~6 more inside the nodes
 ```
@@ -219,7 +218,6 @@ there is.
 
 ```sh
 cd ../infra
-cp terraform.tfvars.example terraform.tfvars    # edit: domain, CIDR, node sizes
 terraform init
 terraform plan
 terraform apply
@@ -240,7 +238,6 @@ kubectl get nodes                  # two Ready nodes
 
 ```sh
 cd ../platform
-cp terraform.tfvars.example terraform.tfvars    # edit: state_bucket, domain_filter
 terraform init
 terraform apply
 ```

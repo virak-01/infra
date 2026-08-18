@@ -38,30 +38,7 @@
 #
 # The token never appears in git, in state, or in user-data. See ../modules/iam-node.
 
-terraform {
-  required_version = ">= 1.5"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.70"
-    }
-  }
-}
-
-provider "aws" {
-  region = var.region
-
-  default_tags {
-    tags = {
-      ManagedBy = "terraform"
-      Stack     = "aws-kubernetes-kubeadm"
-      Cluster   = var.cluster_name
-    }
-  }
-}
-
-# ----------------------------------------------------------------------- inputs
-
+# ─── inputs ────────────────────────────────────────────────────────────────────
 variable "region" {
   description = "AWS region for every resource."
   type        = string
@@ -218,8 +195,7 @@ variable "create_zone" {
   default     = false
 }
 
-# ---------------------------------------------------------------------- shared
-
+# ─── shared ────────────────────────────────────────────────────────────────────
 locals {
   name_prefix = "${var.cluster_name}-${var.environment}"
 
@@ -267,8 +243,7 @@ module "dns" {
   tags        = local.common_tags
 }
 
-# --------------------------------------------------------------------- kubeadm
-
+# ─── kubeadm ───────────────────────────────────────────────────────────────────
 module "security_group" {
   source = "../modules/security-group"
 
@@ -326,8 +301,7 @@ module "ec2" {
   tags = local.common_tags
 }
 
-# --------------------------------------------------------------------- outputs
-
+# ─── outputs ───────────────────────────────────────────────────────────────────
 output "cluster_name" {
   value = var.cluster_name
 }

@@ -11,98 +11,7 @@
 # the existing cluster's network under this state file. Running both side by side
 # is the safer migration.
 
-terraform {
-  required_version = ">= 1.5"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.70"
-    }
-  }
-}
-
-# ----------------------------------------------------------------------- inputs
-
-variable "name" {
-  description = "Name prefix for every resource here."
-  type        = string
-}
-
-variable "cluster_name" {
-  description = <<-EOT
-    EKS cluster name. Used only for the `kubernetes.io/cluster/<name>` subnet tag.
-    Optional for the load balancer controller since Kubernetes 1.19, kept because
-    it is still what most troubleshooting docs tell you to check.
-  EOT
-  type        = string
-}
-
-variable "vpc_cidr" {
-  description = <<-EOT
-    VPC CIDR. This value ALSO has to be written into the cluster manifests: the
-    NetworkPolicy in k8s/components/ingress-alb allows node-sourced traffic from
-    this range, because an ALB with instance targets arrives from a node address.
-    It is exposed as the `vpc_cidr` output for exactly that reason.
-  EOT
-  type        = string
-  default     = "10.20.0.0/16"
-
-  validation {
-    condition     = can(cidrhost(var.vpc_cidr, 0))
-    error_message = "vpc_cidr must be valid CIDR notation, e.g. 10.20.0.0/16."
-  }
-}
-
-variable "az_count" {
-  description = <<-EOT
-    Availability Zones to spread across. An ALB requires at least two, even for a
-    single-node cluster — it will not provision in one AZ.
-  EOT
-  type        = number
-  default     = 3
-
-  validation {
-    condition     = var.az_count >= 2 && var.az_count <= 6
-    error_message = "az_count must be between 2 and 6 (an ALB needs at least 2)."
-  }
-}
-
-variable "enable_nat_gateway" {
-  description = <<-EOT
-    Create NAT gateways so the private subnets have outbound internet.
-
-    TRUE for EKS, which is why it defaults that way: nodes there sit in private
-    subnets and cannot pull an image or reach the control plane without it.
-
-    FALSE for the kubeadm path (../../infra-kubeadm), where nodes sit in PUBLIC
-    subnets with public IPs and reach the internet through the internet gateway
-    directly. Roughly USD 32/month for a gateway nothing routes through.
-  EOT
-  type        = bool
-  default     = true
-}
-
-variable "single_nat_gateway" {
-  description = <<-EOT
-    true  — one NAT gateway shared by every private subnet (~$32/mo, one AZ of
-            egress is a single point of failure).
-    false — one per AZ (~$32/mo each, survives an AZ loss).
-
-    true is the right default for a learning platform; flip it before anything
-    depends on private-subnet egress staying up.
-  EOT
-  type        = bool
-  default     = true
-}
-
-variable "tags" {
-  description = "Extra tags merged onto everything."
-  type        = map(string)
-  default     = {}
-}
-
-# ------------------------------------------------------------------- discovery
-
+# ─── discovery ─────────────────────────────────────────────────────────────────
 data "aws_availability_zones" "available" {
   state = "available"
 
@@ -127,8 +36,7 @@ locals {
   nat_count = var.enable_nat_gateway ? (var.single_nat_gateway ? 1 : var.az_count) : 0
 }
 
-# ------------------------------------------------------------------------- vpc
-
+# ─── vpc ───────────────────────────────────────────────────────────────────────
 resource "aws_vpc" "this" {
   cidr_block = var.vpc_cidr
 
@@ -145,8 +53,7 @@ resource "aws_internet_gateway" "this" {
   tags   = merge(var.tags, { Name = var.name })
 }
 
-# --------------------------------------------------------------------- subnets
-
+# ─── subnets ───────────────────────────────────────────────────────────────────
 resource "aws_subnet" "public" {
   count = var.az_count
 
@@ -190,8 +97,7 @@ resource "aws_subnet" "private" {
   })
 }
 
-# ------------------------------------------------------------------------- nat
-
+# ─── nat ───────────────────────────────────────────────────────────────────────
 resource "aws_eip" "nat" {
   count  = local.nat_count
   domain = "vpc"
@@ -213,8 +119,7 @@ resource "aws_nat_gateway" "this" {
   depends_on = [aws_internet_gateway.this]
 }
 
-# ---------------------------------------------------------------------- routes
-
+# ─── routes ────────────────────────────────────────────────────────────────────
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.this.id
   tags   = merge(var.tags, { Name = "${var.name}-public" })
@@ -255,94 +160,4 @@ resource "aws_route_table_association" "private" {
   count          = var.az_count
   subnet_id      = aws_subnet.private[count.index].id
   route_table_id = aws_route_table.private[count.index].id
-}
-
-# -------------------------------------------------------------- alb sec. group
-#
-# SEAM: the node security group must admit traffic from the ALB's security group,
-# but the controller creates that group itself — so Terraform has no id to point
-# a rule at, and the dependency runs the wrong way.
-#
-# The fix is to own the group here and hand it to the controller instead, with
-# this annotation on the Ingress:
-#
-#   alb.ingress.kubernetes.io/security-groups: <alb_security_group_id output>
-#
-# Then Terraform owns both ends of the rule, and the controller stops creating a
-# group of its own. Without the annotation this group is simply unused and the
-# node rule in modules/cluster admits nothing useful.
-
-resource "aws_security_group" "alb" {
-  # name_prefix, NOT name. A security group cannot be replaced in place, and
-  # `create_before_destroy` below means the replacement is created while the
-  # original still exists — two groups, momentarily, which a fixed name makes
-  # impossible: AWS rejects it with InvalidGroup.Duplicate and the apply dies
-  # halfway. The prefix lets AWS append a unique suffix for the overlap.
-  name_prefix = "${var.name}-alb-"
-  description = "Ingress ALB. Referenced by alb.ingress.kubernetes.io/security-groups."
-  vpc_id      = aws_vpc.this.id
-
-  tags = merge(var.tags, { Name = "${var.name}-alb" })
-
-  # Required because the node-group rule in modules/cluster references this
-  # group: AWS refuses to delete a group another rule points at, so the new one
-  # must exist before the old is removed.
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
-resource "aws_vpc_security_group_ingress_rule" "alb_http" {
-  security_group_id = aws_security_group.alb.id
-  description       = "HTTP from the internet; ssl-redirect upgrades it to 443."
-  cidr_ipv4         = "0.0.0.0/0"
-  from_port         = 80
-  to_port           = 80
-  ip_protocol       = "tcp"
-}
-
-resource "aws_vpc_security_group_ingress_rule" "alb_https" {
-  security_group_id = aws_security_group.alb.id
-  description       = "HTTPS from the internet."
-  cidr_ipv4         = "0.0.0.0/0"
-  from_port         = 443
-  to_port           = 443
-  ip_protocol       = "tcp"
-}
-
-resource "aws_vpc_security_group_egress_rule" "alb_all" {
-  security_group_id = aws_security_group.alb.id
-  description       = "To node ports in the VPC."
-  cidr_ipv4         = var.vpc_cidr
-  ip_protocol       = "-1"
-}
-
-# ---------------------------------------------------------------------- outputs
-
-output "vpc_id" {
-  value = aws_vpc.this.id
-}
-
-output "vpc_cidr" {
-  description = "Write this into the NetworkPolicy in k8s/components/ingress-alb."
-  value       = aws_vpc.this.cidr_block
-}
-
-output "public_subnet_ids" {
-  description = "Tagged for internet-facing load balancers."
-  value       = aws_subnet.public[*].id
-}
-
-output "private_subnet_ids" {
-  description = "Where nodes run. Pod IPs come from these ranges under the VPC CNI."
-  value       = aws_subnet.private[*].id
-}
-
-output "alb_security_group_id" {
-  description = "Set as alb.ingress.kubernetes.io/security-groups on the Ingress."
-  value       = aws_security_group.alb.id
-}
-
-output "azs" {
-  value = local.azs
 }

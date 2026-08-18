@@ -27,11 +27,16 @@ crash.*.log
 # .terraform.lock.hcl IS COMMITTED and deliberately not listed above. It pins provider
 # versions and hashes so every machine and every CI run resolves identical providers.
 
-# Real tfvars hold account ids and domain names; only the examples are committed.
-terraform/**/terraform.tfvars
+# terraform.tfvars IS COMMITTED here, deliberately. The values in it are
+# configuration, not credentials — region, CIDRs, instance types, node counts — and
+# committing them means `terraform plan` works straight after a clone with no copy
+# step. Read terraform/*/terraform.tfvars before trusting that claim in a fork.
+#
+# Anything genuinely sensitive goes in a file that IS ignored:
 *.auto.tfvars
 *.auto.tfvars.json
-!terraform/**/terraform.tfvars.example
+secrets.tfvars
+*-secret.tfvars
 *.tfplan
 *.tfplan.*
 

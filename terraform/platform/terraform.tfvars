@@ -4,13 +4,16 @@ region = "us-east-1"
 
 # From `cd ../bootstrap && terraform output -raw state_bucket`. This stack reads
 # infra/'s outputs out of the same bucket.
-state_bucket = "REPLACE-ME-terraform-state-<account-id>"
+state_bucket = "k8s-tfstate-<ACCOUNT_ID>-us-east-1"
 
 # NOT OPTIONAL IN PRACTICE. external-dns runs with policy=sync, which means it
 # DELETES records it believes are orphaned. An empty filter makes every hosted
 # zone in the account eligible, so a misread would remove records belonging to
 # something else. Set it to the one zone this cluster owns.
-domain_filter = "devops-selft-learning.xyz"
+# NOT OPTIONAL IN PRACTICE. external-dns runs policy=sync, which DELETES records it
+# believes are orphaned — an empty filter makes every hosted zone in the account
+# eligible. With no zone at all it simply matches nothing, which is safe.
+domain_filter = "example.invalid"
 
 # Keep in step with LBC_VERSION in script/fetch-policies.sh — chart 1.8.2
 # ships controller v2.8.2. A controller newer than its IAM policy calls actions

@@ -9,22 +9,11 @@
 # it did not create, so a rule added by a controller or by hand disappears on the
 # next apply with no warning.
 
-terraform {
-  required_version = ">= 1.5"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.70"
-    }
-  }
-}
-
 locals {
   nodeport_cidrs = var.nodeport_allowed_cidrs != null ? var.nodeport_allowed_cidrs : var.ssh_allowed_cidrs
 }
 
-# ============================================================== control plane
-
+# ─── control plane ─────────────────────────────────────────────────────────────
 resource "aws_security_group" "control_plane" {
   name_prefix = "${var.name_prefix}-control-plane-"
   description = "Kubernetes control-plane node"
@@ -144,8 +133,7 @@ resource "aws_vpc_security_group_egress_rule" "cp_all" {
   ip_protocol       = "-1"
 }
 
-# ==================================================================== workers
-
+# ─── workers ───────────────────────────────────────────────────────────────────
 resource "aws_security_group" "worker" {
   name_prefix = "${var.name_prefix}-worker-"
   description = "Kubernetes worker node"

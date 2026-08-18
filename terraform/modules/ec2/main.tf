@@ -5,16 +5,6 @@
 # node that failed, tested with shellcheck, and reviewed as shell — and there is
 # exactly one copy of each, not one for user-data and one for the runbook.
 
-terraform {
-  required_version = ">= 1.5"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.70"
-    }
-  }
-}
-
 data "aws_region" "current" {}
 
 # Latest Canonical Ubuntu 22.04 LTS for this region, unless an AMI was pinned.
@@ -71,7 +61,7 @@ locals {
   install_script_b64 = base64encode(local.shared_install_script)
 }
 
-# ---------------------------------------------------------------- the join param
+# ─── the join param ────────────────────────────────────────────────────────────
 #
 # Created here with a PLACEHOLDER value. The real join command is written by the
 # control plane at boot, using the least-privilege role from the iam module.
@@ -93,8 +83,7 @@ resource "aws_ssm_parameter" "join_command" {
   tags = merge(var.tags, { Name = var.join_command_parameter_name })
 }
 
-# ================================================================ control plane
-
+# ─── control plane ─────────────────────────────────────────────────────────────
 resource "aws_instance" "control_plane" {
   ami           = local.ami_id
   instance_type = local.control_plane_type
@@ -142,8 +131,7 @@ resource "aws_instance" "control_plane" {
   })
 }
 
-# ======================================================================= workers
-
+# ─── workers ───────────────────────────────────────────────────────────────────
 resource "aws_instance" "worker" {
   count = var.worker_count
 

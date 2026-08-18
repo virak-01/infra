@@ -33,7 +33,14 @@ single_nat_gateway = true
 # create_zone = true creates one — you must then point the registrar at the
 # `zone_name_servers` output, or ACM validation never completes.
 # ---------------------------------------------------------------------------
-domain_name = "devops-selft-learning.xyz"
+# null skips the hosted zone and certificate entirely, and the ALB is reachable by its
+# own hostname over HTTP. That is the only value that works on an account with no
+# domain — with create_zone = false the dns module does a Route 53 LOOKUP, and a domain
+# you do not own fails the apply with "no matching Route53Zone found".
+#
+# Set a real domain here once you own one, and remember the certificate-arn and
+# ssl-redirect annotations in k8s/components/ingress-alb only make sense with it.
+domain_name = null
 create_zone = false
 
 # ---------------------------------------------------------------------------

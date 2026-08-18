@@ -26,24 +26,6 @@
 # by Argo CD or `make deploy`. Terraform owns the platform; kustomize owns the
 # workloads. Same repo, deliberately separate lifecycles.
 
-terraform {
-  required_version = ">= 1.5"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.70"
-    }
-    helm = {
-      source  = "hashicorp/helm"
-      version = "~> 2.15"
-    }
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = "~> 2.33"
-    }
-  }
-}
-
 variable "region" {
   type    = string
   default = "us-east-1"
@@ -71,12 +53,7 @@ variable "alb_controller_chart_version" {
   default     = "1.8.2"
 }
 
-provider "aws" {
-  region = var.region
-}
-
-# ------------------------------------------------------------- infra's outputs
-
+# ─── infra's outputs ───────────────────────────────────────────────────────────
 data "terraform_remote_state" "infra" {
   backend = "s3"
   config = {
@@ -102,22 +79,7 @@ data "aws_eks_cluster_auth" "this" {
   name = local.cluster_name
 }
 
-provider "helm" {
-  kubernetes {
-    host                   = data.aws_eks_cluster.this.endpoint
-    cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
-    token                  = data.aws_eks_cluster_auth.this.token
-  }
-}
-
-provider "kubernetes" {
-  host                   = data.aws_eks_cluster.this.endpoint
-  cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
-  token                  = data.aws_eks_cluster_auth.this.token
-}
-
-# --------------------------------------------------- aws load balancer controller
-
+# ─── aws load balancer controller ──────────────────────────────────────────────
 resource "helm_release" "alb_controller" {
   name       = "aws-load-balancer-controller"
   repository = "https://aws.github.io/eks-charts"
@@ -166,8 +128,7 @@ resource "helm_release" "alb_controller" {
   }
 }
 
-# ---------------------------------------------------------------- external-dns
-
+# ─── external-dns ──────────────────────────────────────────────────────────────
 resource "helm_release" "external_dns" {
   name       = "external-dns"
   repository = "https://kubernetes-sigs.github.io/external-dns"
@@ -226,8 +187,7 @@ resource "helm_release" "external_dns" {
   depends_on = [helm_release.alb_controller]
 }
 
-# --------------------------------------------------------------- metrics-server
-
+# ─── metrics-server ────────────────────────────────────────────────────────────
 resource "helm_release" "metrics_server" {
   name       = "metrics-server"
   repository = "https://kubernetes-sigs.github.io/metrics-server"
@@ -243,7 +203,7 @@ resource "helm_release" "metrics_server" {
   }
 }
 
-# ------------------------------------------------------------ cluster autoscaler
+# ─── cluster autoscaler ────────────────────────────────────────────────────────
 #
 # Installed by HELM here rather than by the manifests repo's
 # k8s/cluster/aws/cluster-autoscaler, which cannot work on EKS: that Deployment
@@ -304,8 +264,7 @@ resource "helm_release" "cluster_autoscaler" {
   depends_on = [helm_release.metrics_server]
 }
 
-# ---------------------------------------------------------------------- outputs
-
+# ─── outputs ───────────────────────────────────────────────────────────────────
 output "installed" {
   value = {
     alb_controller     = helm_release.alb_controller.version

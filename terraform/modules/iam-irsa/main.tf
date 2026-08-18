@@ -11,63 +11,7 @@
 # images directly, so the static access key and the CronJob that used it are both
 # gone. That removes an unrotated long-lived credential from the platform.
 
-terraform {
-  required_version = ">= 1.5"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.70"
-    }
-  }
-}
-
-# ----------------------------------------------------------------------- inputs
-
-variable "cluster_name" {
-  type = string
-}
-
-variable "oidc_provider_arn" {
-  type = string
-}
-
-variable "oidc_provider_url" {
-  description = "Issuer with no https:// prefix."
-  type        = string
-}
-
-variable "route53_zone_arn" {
-  description = <<-EOT
-    Scopes external-dns to one zone. Passing null grants it every zone in the
-    account, which is the difference between a DNS controller and an account-wide
-    DNS rewrite capability.
-  EOT
-  type        = string
-  default     = null
-}
-
-variable "alb_controller_policy_json" {
-  description = <<-EOT
-    Path to the AWS-published load balancer controller IAM policy.
-
-    NOT written by hand: it is ~180 statements with specific conditions, revised
-    per controller release, and a subtly wrong copy fails at ALB-creation time
-    with an AccessDenied that names an action you did not know it needed. Fetch
-    the pinned upstream copy first:
-
-      ./script/fetch-policies.sh
-
-    A missing file fails the plan immediately, which is the right failure.
-  EOT
-  type        = string
-}
-
-variable "tags" {
-  type    = map(string)
-  default = {}
-}
-
-# --------------------------------------------------------------- trust policies
+# ─── trust policies ────────────────────────────────────────────────────────────
 #
 # The two condition keys are both load-bearing:
 #
@@ -113,8 +57,7 @@ data "aws_iam_policy_document" "assume" {
   }
 }
 
-# ------------------------------------------------- aws load balancer controller
-
+# ─── aws load balancer controller ──────────────────────────────────────────────
 resource "aws_iam_role" "alb_controller" {
   name               = "${var.cluster_name}-alb-controller"
   assume_role_policy = data.aws_iam_policy_document.assume["alb_controller"].json
@@ -133,8 +76,7 @@ resource "aws_iam_role_policy_attachment" "alb_controller" {
   policy_arn = aws_iam_policy.alb_controller.arn
 }
 
-# ---------------------------------------------------------------- external-dns
-
+# ─── external-dns ──────────────────────────────────────────────────────────────
 data "aws_iam_policy_document" "external_dns" {
   # Writing records. Scoped to the one zone when its ARN is known — the whole
   # point of passing it in.
@@ -172,8 +114,7 @@ resource "aws_iam_role_policy" "external_dns" {
   policy = data.aws_iam_policy_document.external_dns.json
 }
 
-# ------------------------------------------------------------ cluster autoscaler
-
+# ─── cluster autoscaler ────────────────────────────────────────────────────────
 data "aws_iam_policy_document" "autoscaler" {
   # Read side. Describe* cannot be resource-scoped on the autoscaling API.
   statement {
@@ -223,23 +164,4 @@ resource "aws_iam_role_policy" "autoscaler" {
   name   = "cluster-autoscaler"
   role   = aws_iam_role.autoscaler.id
   policy = data.aws_iam_policy_document.autoscaler.json
-}
-
-# ---------------------------------------------------------------------- outputs
-
-output "alb_controller_role_arn" {
-  value = aws_iam_role.alb_controller.arn
-}
-
-output "external_dns_role_arn" {
-  value = aws_iam_role.external_dns.arn
-}
-
-output "autoscaler_role_arn" {
-  value = aws_iam_role.autoscaler.arn
-}
-
-output "service_accounts" {
-  description = "The namespace/name pairs the trust policies pin. The Helm values must match exactly."
-  value       = local.service_accounts
 }

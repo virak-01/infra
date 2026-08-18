@@ -5,33 +5,26 @@
 # lock table using LOCAL state, and its own state file is committed nowhere and
 # needed almost never — the two resources here are create-once and never change.
 #
-#   cd bootstrap
-#   terraform init && terraform apply
-#   terraform output -raw state_bucket     # paste into ../infra/backend.tf
+#   cd terraform/bootstrap
+#   terraform init
+#   terraform apply                      # no -var: the name derives from your account
+#   terraform output -raw state_bucket
+#
+# RUN IT ONCE. If you apply again with a DIFFERENT name, Terraform plans to replace the
+# bucket — an S3 bucket name is ForceNew — and prevent_destroy below stops it:
+#
+#   Error: Instance cannot be destroyed … has lifecycle.prevent_destroy set
+#
+# That is the guard working, not a problem to route around. You almost never want a new
+# bucket; you want the name of the one you already have:
+#
+#   terraform output -raw state_bucket
+#
+# Passing -var also avoids the interactive prompt, where it is easy to type a name that
+# differs from the one in state by an account digit.
 #
 # Deliberately NOT part of infra/: a stack cannot hold the bucket its own state
 # lives in. Destroying infra would delete the record of what it destroyed.
-
-terraform {
-  required_version = ">= 1.5"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.70"
-    }
-  }
-}
-
-provider "aws" {
-  region = var.region
-  default_tags {
-    tags = {
-      ManagedBy = "terraform"
-      Stack     = "bootstrap"
-      Repo      = "aws-kubernetes"
-    }
-  }
-}
 
 variable "region" {
   description = "Region for the state bucket. Keep it the same as the platform region."
@@ -41,11 +34,29 @@ variable "region" {
 
 variable "state_bucket_name" {
   description = <<-EOT
-    Globally unique S3 bucket name for Terraform state. S3 bucket names are global
-    across all AWS accounts, so this must be unique to you — the account id suffix
-    below is the usual way.
+    OVERRIDE ONLY. Leave empty and the name is derived as
+
+      k8s-tfstate-<account-id>-<region>
+
+    which is globally unique (S3 names are global across every AWS account) and
+    DETERMINISTIC — so `terraform apply` needs no -var and re-running produces the same
+    name instead of planning to replace the bucket.
+
+    Set it only to adopt a bucket created under a different name. Applying with a name
+    that differs from the one in state is what produces:
+
+      Error: Instance cannot be destroyed … has lifecycle.prevent_destroy set
   EOT
   type        = string
+  default     = ""
+}
+
+data "aws_caller_identity" "current" {}
+
+locals {
+  # Derived rather than required. The account id is the only part that has to be
+  # unique, and it is knowable — asking a human to type it is how the two diverge.
+  bucket_name = var.state_bucket_name != "" ? var.state_bucket_name : "k8s-tfstate-${data.aws_caller_identity.current.account_id}-${var.region}"
 }
 
 variable "lock_table_name" {
@@ -55,7 +66,7 @@ variable "lock_table_name" {
 }
 
 resource "aws_s3_bucket" "state" {
-  bucket = var.state_bucket_name
+  bucket = local.bucket_name
 
   # State files describe live infrastructure. Losing one means losing the ability
   # to change or destroy what it tracks, so this bucket is not disposable.
@@ -70,6 +81,29 @@ resource "aws_s3_bucket_versioning" "state" {
   bucket = aws_s3_bucket.state.id
   versioning_configuration {
     status = "Enabled"
+  }
+}
+
+# Versioning keeps every historical state file forever unless told otherwise. Ninety
+# days is far longer than any recovery window and stops the bucket growing without
+# bound — a busy stack writes a new version on every apply.
+resource "aws_s3_bucket_lifecycle_configuration" "state" {
+  bucket = aws_s3_bucket.state.id
+
+  rule {
+    id     = "expire-noncurrent-versions"
+    status = "Enabled"
+
+    filter {}
+
+    noncurrent_version_transition {
+      noncurrent_days = 30
+      storage_class   = "STANDARD_IA"
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 90
+    }
   }
 }
 
@@ -108,14 +142,28 @@ resource "aws_dynamodb_table" "locks" {
     type = "S"
   }
 
+  # A lock table is cheap to lose — the locks are transient — but PITR costs almost
+  # nothing at this size and removes any question during an incident.
+  point_in_time_recovery {
+    enabled = true
+  }
+
   lifecycle {
     prevent_destroy = true
   }
 }
 
 output "state_bucket" {
-  description = "Put this in ../infra/backend.tf and ../platform/backend.tf."
-  value       = aws_s3_bucket.state.id
+  description = <<-EOT
+    The bucket name. NOT pasted into any backend.tf — those carry no literal bucket.
+    Pass it at init instead:
+
+      terraform -chdir=terraform/infra init -backend-config="bucket=$(terraform -chdir=terraform/bootstrap output -raw state_bucket)"
+
+    This is also how you recover the name if you have forgotten it. Re-applying with a
+    different one tries to replace the bucket and is blocked by prevent_destroy.
+  EOT
+  value = aws_s3_bucket.state.id
 }
 
 output "lock_table" {

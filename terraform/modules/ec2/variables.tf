@@ -13,8 +13,7 @@ variable "environment" {
   type        = string
 }
 
-# ------------------------------------------------------------------------ image
-
+# ─── image ─────────────────────────────────────────────────────────────────────
 variable "ami_id" {
   description = <<-EOT
     AMI for every node. Leave null to look up the latest Canonical Ubuntu 22.04 LTS
@@ -73,8 +72,7 @@ variable "key_name" {
   default     = null
 }
 
-# --------------------------------------------------------------------- placement
-
+# ─── placement ─────────────────────────────────────────────────────────────────
 variable "subnet_ids" {
   description = <<-EOT
     Subnets to place nodes in, round-robin. Public subnets by default so nodes are
@@ -114,8 +112,7 @@ variable "worker_instance_profile" {
   type        = string
 }
 
-# ------------------------------------------------------------------ kubernetes
-
+# ─── kubernetes ────────────────────────────────────────────────────────────────
 variable "worker_count" {
   description = "Number of worker nodes."
   type        = number
