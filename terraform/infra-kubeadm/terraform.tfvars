@@ -79,10 +79,28 @@ nodeport_allowed_cidrs = ["0.0.0.0/0"]
 # Going 3 -> 5 later adds two workers and leaves the running three alone.
 worker_count = 3
 
-# The control plane is deliberately larger: every kubelet watches its API server and
-# every change writes to its etcd, so its load scales with the node count while a
-# worker's does not.
-instance_type               = "t3.medium"
+# Workers move from t3.medium (2 vCPU / 4 GiB) to t2.large (2 vCPU / 8 GiB) — twice
+# the memory, which is the constraint that actually bites first on a worker: pods,
+# their images and the kubelet all share it, while 2 vCPU goes a long way.
+#
+# NO EFFECT ON THE vCPU QUOTA. t2 and t3 sit in the same "Standard" bucket, and both
+# sizes are 2 vCPU, so the total is unchanged at 8 for a 3-worker cluster. Changing
+# instance TYPE never fixes VcpuLimitExceeded; only changing worker_count does.
+#
+# WORTH KNOWING: t3.large is the same 2 vCPU / 8 GiB for roughly 10% less, on newer
+# hardware with better network throughput — t2 is the previous generation. If there is
+# no specific reason for t2, this line is a strictly cheaper one-word change:
+#
+#   instance_type = "t3.large"
+#
+# The control plane is deliberately no smaller than a worker: every kubelet watches its
+# API server and every change writes to its etcd, so its load scales with the node
+# count while a worker's does not. Already 2 vCPU / 8 GiB, so it needs no change here.
+#
+# CHANGING EITHER LINE REPLACES THOSE INSTANCES. Instance type is not modifiable in
+# place, so this is a destroy-and-recreate — fine here, since the nodes re-bootstrap
+# and rejoin on their own, but it means a rolling restart of anything running on them.
+instance_type               = "t2.large"
 control_plane_instance_type = "t3.large"
 root_volume_size            = 40
 
