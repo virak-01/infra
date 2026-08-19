@@ -307,3 +307,7 @@ kubectl -n prod get pods -l app=api-core-web 2>/dev/null || echo "(no cluster ac
 
 ## AWS
 aws ssm start-session --target i-0bd2575115552d14b
+
+
+terraform -chdir=terraform/platform destroy      # only if you ever applied it
+terraform -chdir=terraform/infra-kubeadm destroy

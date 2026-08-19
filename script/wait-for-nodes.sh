@@ -91,9 +91,10 @@ command -v aws >/dev/null 2>&1 || {
 # produce the same thing: nothing at all, for the full twenty minutes. AWS answers the
 # second one in milliseconds and the message says exactly what is wrong, so it is kept
 # here and reported by the caller once failing stops looking like a slow boot.
-ERR_FILE=$(mktemp) # raw stderr of the most recent AWS call
-MSG_FILE=$(mktemp) # the formatted reason the most recent check failed
-trap 'rm -f "$ERR_FILE" "$MSG_FILE"' EXIT
+ERR_FILE=$(mktemp)  # raw stderr of the most recent AWS call
+MSG_FILE=$(mktemp)  # the formatted reason the most recent check failed
+JSON_FILE=$(mktemp) # the --parameters document for the current send-command
+trap 'rm -f "$ERR_FILE" "$MSG_FILE" "$JSON_FILE"' EXIT
 
 # WHY THE REASON GOES IN A FILE AND NOT A VARIABLE. on_control_plane is called as
 # `count=$(on_control_plane ...)`, and a command substitution runs in a SUBSHELL: every
@@ -116,11 +117,31 @@ on_control_plane() {
   # Cleared per call, so the fallback at the bottom cannot inherit an older reason.
   : >"$MSG_FILE"
 
+  # --parameters AS JSON, NOT the `commands=[...]` shorthand.
+  #
+  # The shorthand parser applies its own quoting rules on top of the shell's, and these
+  # commands are shell pipelines: `2>/dev/null`, `|`, `||`, `;`. Some CLI builds reject
+  # that combination outright with
+  #
+  #   badly formed help string
+  #
+  # which is an argument-parsing failure raised BEFORE any request is sent — so nothing
+  # about SSM, IAM or the node explains it, and every call fails identically forever.
+  # A simple command through the same shorthand works, which is what makes this so
+  # slow to spot. JSON has one set of rules and reaches the API untouched.
+  #
+  # Passed by file rather than as an argument: a long JSON string on the command line
+  # is the other half of the same quoting problem.
+  #
+  # Neither command below contains a `"` or a `\`, which is what makes this plain
+  # interpolation safe. Keep that true if you add a third.
+  printf '{"commands":["%s"]}' "$1" >"$JSON_FILE"
+
   if ! cid=$(aws ssm send-command \
     --region "$REGION" \
     --instance-ids "$INSTANCE" \
     --document-name AWS-RunShellScript \
-    --parameters "commands=[\"$1\"]" \
+    --parameters "file://$JSON_FILE" \
     --query Command.CommandId --output text 2>"$ERR_FILE"); then
     note_err "ssm send-command"
     return 1
