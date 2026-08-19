@@ -95,6 +95,36 @@ install_containerd() {
 # ------------------------------------------------------- kubeadm kubelet kubectl
 
 install_kubernetes() {
+  # KUBEADM'S PREFLIGHT NEEDS THESE AND NOTHING PULLS THEM IN. The kubelet package on
+  # pkgs.k8s.io declares no dependency on conntrack, and Ubuntu's cloud image does not
+  # ship it, so every package here installs cleanly and then `kubeadm init` refuses:
+  #
+  #   [ERROR FileExisting-conntrack]: conntrack not found in system path
+  #
+  # That is a fatal preflight error, not a warning, and it fails `join` for the same
+  # reason it fails `init` — kube-proxy needs conntrack on every node. The bootstrap
+  # unit then retries once a minute forever against a condition that cannot resolve
+  # itself, which looks exactly like a cluster that is merely slow to form.
+  #
+  # DELIBERATELY OUTSIDE the kubeadm gate below. A node that already has kubeadm but is
+  # missing these would skip the entire block and fail preflight again on every retry —
+  # which is precisely the state a node reaches after this bug bites once.
+  #
+  # `command -v` rather than a dpkg query on purpose: preflight looks these up on PATH,
+  # so this checks the same thing kubeadm is about to check.
+  local missing=()
+  local pkg
+  for pkg in conntrack socat ethtool; do
+    command -v "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
+  done
+
+  if ((${#missing[@]})); then
+    log "installing kubeadm prerequisites: ${missing[*]}"
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq
+    apt-get install -y -qq "${missing[@]}"
+  fi
+
   if command -v kubeadm >/dev/null 2>&1; then
     log "kubeadm already installed ($(kubeadm version -o short 2>/dev/null || echo unknown)), skipping"
   else
