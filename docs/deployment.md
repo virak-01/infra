@@ -16,7 +16,7 @@ The registry is the handoff. Deploying a new version is a one-line edit to an
 overlay's `newTag:` — never a rebuild. Nothing here requires Docker, which is
 why a cluster node running containerd can deploy this repo perfectly well.
 
-Published to private ECR in `us-east-1`, account `043309361013` — so the cluster
+Published to private ECR in `us-east-1`, account `866409326838` — so the cluster
 must be able to authenticate before any pod starts (see below):
 
 | Image | Serves |
@@ -58,7 +58,7 @@ provider exists there, so the credentials must be stored:
 
 ```sh
 kubectl -n uat create secret docker-registry ecr-creds \
-  --docker-server=043309361013.dkr.ecr.us-east-1.amazonaws.com \
+  --docker-server=866409326838.dkr.ecr.us-east-1.amazonaws.com \
   --docker-username=AWS \
   --docker-password="$(aws ecr get-login-password --region us-east-1)"
 ```

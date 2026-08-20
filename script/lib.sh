@@ -51,7 +51,7 @@ ENV="${ENV:-prod}"
 CLOUD="${CLOUD:-aws}"
 HOST="${HOST:-}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
-ECR_REGISTRY="${ECR_REGISTRY:-043309361013.dkr.ecr.${AWS_REGION}.amazonaws.com}"
+ECR_REGISTRY="${ECR_REGISTRY:-866409326838.dkr.ecr.${AWS_REGION}.amazonaws.com}"
 
 # ------------------------------------------------------------------- arg parsing
 #

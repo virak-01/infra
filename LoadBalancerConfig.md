@@ -84,8 +84,13 @@ aws ec2 create-tags --region us-east-1 \
               subnet-03ce7b03b9ef73529 subnet-0b85e993a6c4343b9 \
               subnet-0acc8d5ca35643cc9 subnet-0b09b7f7f8d3c49d6 \
   --tags Key=kubernetes.io/role/elb,Value=1 \
-         Key=kubernetes.io/cluster/kubernetes,Value=shared
+         Key=kubernetes.io/cluster/company-kubeadm,Value=shared
 ```
+
+> **Terraform already applied both tags** — see `modules/network/main.tf`, which
+> stamps `kubernetes.io/role/elb` and `kubernetes.io/cluster/${cluster_name}` on
+> every public subnet. Run the command above only for subnets Terraform does not
+> manage. Re-tagging the ones it does is harmless but pointless.
 
 **Tag all six, not the minimum two.** An ALB only delivers to nodes in an AZ
 that is enabled on the load balancer; a node in an un-enabled AZ registers
@@ -93,12 +98,21 @@ successfully and then sits permanently `unused`, which looks like a broken app
 rather than a placement problem. Tagging every AZ removes the failure mode, and
 an ALB spanning six AZs costs exactly what one spanning two costs.
 
-`<clusterName>` must match what you pass to Helm in step 5. kubeadm defaults to
-`kubernetes`:
+**`<clusterName>` IS NOT KUBEADM'S CLUSTER NAME.** It is an arbitrary label, and
+its only job is to match the subnet tag — so it must equal Terraform's
+`cluster_name` (`company-kubeadm`), NOT the `kubernetes` that kubeadm-config
+reports. Passing kubeadm's name instead is a silent failure: the controller
+authenticates, lists the subnets, rejects every one, and loops on
+
+```
+couldn't auto-discover subnets: unable to resolve at least one subnet.
+Evaluated 3 subnets: 3 are tagged for other clusters
+```
+
+Read the authoritative value from Terraform rather than from the cluster:
 
 ```sh
-kubectl -n kube-system get cm kubeadm-config \
-  -o jsonpath='{.data.ClusterConfiguration}' | grep clusterName
+grep cluster_name terraform/infra-kubeadm/terraform.tfvars
 ```
 
 ## 3. Security groups
@@ -152,16 +166,36 @@ ways to supply them, in descending order of preference:
 | Instance profile | Any EC2 node | Readable via IMDS by anything on the node. |
 | Static keys in a Secret | Anywhere | No rotation; needs `iam:CreatePolicy` only, not `iam:CreateRole`. |
 
-Both non-IRSA options need the AWS-published policy attached to the identity:
+Both non-IRSA options need the AWS-published policy attached to the identity.
+
+> **PIN ONE VERSION AND USE IT TWICE** — here, and for the chart in step 5.
+> Every controller release adds ELB/EC2 actions, so a policy older than the
+> running controller fails with `AccessDenied` **at the first reconcile**: never
+> at install, never in the startup logs, and only once a real Ingress exists.
+> This doc pinned the policy at v2.7.2 while the chart floated to latest, which
+> put a v2.7.2 policy under a v3.5.0 controller. Move both together or neither.
 
 ```sh
+LBC_VERSION=v3.5.0        # must match the GitVersion the controller logs at startup
+
 curl -o iam-policy.json \
-  https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.7.2/docs/install/iam_policy.json
+  "https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/${LBC_VERSION}/docs/install/iam_policy.json"
 
 aws iam create-policy \
   --policy-name AWSLoadBalancerControllerIAMPolicy \
   --policy-document file://iam-policy.json
 ```
+
+Updating a policy that already exists — `create-policy` fails once it does:
+
+```sh
+aws iam create-policy-version \
+  --policy-arn arn:aws:iam::866409326838:policy/AWSLoadBalancerControllerIAMPolicy \
+  --policy-document file://iam-policy.json --set-as-default
+```
+
+A managed policy holds at most 5 versions; `aws iam delete-policy-version` an
+old one if that errors.
 
 **Instance profile** — fewer moving parts, but see the warning below:
 
@@ -176,7 +210,7 @@ EOF
 aws iam create-role --role-name k8s-alb-controller-node \
   --assume-role-policy-document file://trust.json
 aws iam attach-role-policy --role-name k8s-alb-controller-node \
-  --policy-arn arn:aws:iam::043309361013:policy/AWSLoadBalancerControllerIAMPolicy
+  --policy-arn arn:aws:iam::866409326838:policy/AWSLoadBalancerControllerIAMPolicy
 aws iam create-instance-profile --instance-profile-name k8s-alb-controller-node
 aws iam add-role-to-instance-profile \
   --instance-profile-name k8s-alb-controller-node \
@@ -219,11 +253,23 @@ mapping is involved.
 helm repo add eks https://aws.github.io/eks-charts
 helm repo update
 
-helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+# THE CHART VERSION IS NOT THE CONTROLLER VERSION. Find the chart shipping the
+# $LBC_VERSION pinned in step 4 — column 2 is the chart, column 3 the app:
+helm search repo eks/aws-load-balancer-controller --versions \
+  | awk -v v="${LBC_VERSION#v}" '$3 == v'
+
+# upgrade --install, not install: re-running a plain `install` on an existing
+# release fails with "cannot re-use a name that is still in use" and changes
+# nothing, while `rollout status` below still reports the OLD pod as healthy.
+#
+# --version is what keeps the chart from floating to latest while the IAM policy
+# stays frozen at whatever step 4 fetched.
+helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
   -n kube-system \
-  --set clusterName=kubernetes \
+  --version <chart-version-from-the-search-above> \
+  --set clusterName=company-kubeadm \
   --set region=us-east-1 \
-  --set vpcId=vpc-05b81b6a8bff35520
+  --set vpcId=vpc-0a10f079fdb9a18c3 \
   --set 'envFrom[0].secretRef.name=aws-alb-credentials'
 
 kubectl -n kube-system rollout status deploy/aws-load-balancer-controller
@@ -284,7 +330,7 @@ base path and the Ingress does not rewrite.
 
 ```sh
 aws elbv2 describe-target-groups --region us-east-1 \
-  --query 'TargetGroups[?VpcId==`vpc-05b81b6a8bff35520`].{Name:TargetGroupName,Port:Port,Path:HealthCheckPath}' \
+  --query 'TargetGroups[?VpcId==`vpc-0a10f079fdb9a18c3`].{Name:TargetGroupName,Port:Port,Path:HealthCheckPath}' \
   --output table
 ```
 
