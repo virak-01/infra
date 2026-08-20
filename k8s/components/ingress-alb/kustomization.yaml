@@ -59,7 +59,7 @@ patches:
           # its certificate was destroyed cost an afternoon — the controller
           # builds the ALB, then loops on CertificateNotFound with no listener,
           # so the Ingress address never becomes usable.
-          alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:866409326838:certificate/f24931fe-f612-4642-8474-f5053b02298f
+          alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:866409326838:certificate/3c168ea7-57fc-4e74-9338-6a9ff773f71d
           # Fallback only, and every Service overrides it — each one mounts at
           # its own base path, so no single path is healthy on all of them
           # (/user is a 404 on employee-web). Per-Service annotations win; see
