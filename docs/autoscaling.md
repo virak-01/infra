@@ -72,7 +72,7 @@ cat > /tmp/ca-policy.json <<'EOF'
     {
       "Effect": "Allow",
       "Action": ["ssm:GetParameter"],
-      "Resource": "arn:aws:ssm:us-east-1:043309361013:parameter/k8s/join-command"
+      "Resource": "arn:aws:ssm:us-east-1:866409326838:parameter/k8s/join-command"
     }
   ]
 }

@@ -119,19 +119,19 @@ on_control_plane() {
 
   # --parameters AS JSON, NOT the `commands=[...]` shorthand.
   #
-  # The shorthand parser applies its own quoting rules on top of the shell's, and these
-  # commands are shell pipelines: `2>/dev/null`, `|`, `||`, `;`. Some CLI builds reject
-  # that combination outright with
+  # The shorthand parser applies its own quoting rules on top of the shell's, and the
+  # commands here are shell pipelines — `2>/dev/null`, `|`, `||`, `;`. That is two
+  # quoting layers to get right for a payload that is already awkward, and the CLI
+  # accepts JSON for the same argument with one set of rules. By file rather than as an
+  # argument, because a long JSON string on the command line reintroduces the problem
+  # this is avoiding.
   #
-  #   badly formed help string
-  #
-  # which is an argument-parsing failure raised BEFORE any request is sent — so nothing
-  # about SSM, IAM or the node explains it, and every call fails identically forever.
-  # A simple command through the same shorthand works, which is what makes this so
-  # slow to spot. JSON has one set of rules and reaches the API untouched.
-  #
-  # Passed by file rather than as an argument: a long JSON string on the command line
-  # is the other half of the same quoting problem.
+  # NOT A FIX FOR `badly formed help string`. That error comes from the CLI failing to
+  # build the argument parser for `ssm send-command` at all — seen on Ubuntu 26.04's
+  # distro-packaged aws-cli 2.31.35 on Python 3.14, where it fires identically for
+  # shorthand and for JSON, and for `commands=["uptime"]` as readily as for a pipeline.
+  # Nothing this script passes can avoid it; install the official AWS CLI bundle, which
+  # vendors its own Python.
   #
   # Neither command below contains a `"` or a `\`, which is what makes this plain
   # interpolation safe. Keep that true if you add a third.

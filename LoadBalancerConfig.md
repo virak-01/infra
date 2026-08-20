@@ -176,7 +176,7 @@ EOF
 aws iam create-role --role-name k8s-alb-controller-node \
   --assume-role-policy-document file://trust.json
 aws iam attach-role-policy --role-name k8s-alb-controller-node \
-  --policy-arn arn:aws:iam::043309361013:policy/AWSLoadBalancerControllerIAMPolicy
+  --policy-arn arn:aws:iam::866409326838:policy/AWSLoadBalancerControllerIAMPolicy
 aws iam create-instance-profile --instance-profile-name k8s-alb-controller-node
 aws iam add-role-to-instance-profile \
   --instance-profile-name k8s-alb-controller-node \

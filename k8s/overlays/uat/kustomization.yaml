@@ -48,16 +48,16 @@ namespace: uat
 
 images:
   - name: employee-web
-    newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/website
+    newName: 866409326838.dkr.ecr.us-east-1.amazonaws.com/website
     newTag: staging-9ed42421
   - name: user-web
-    newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/website
+    newName: 866409326838.dkr.ecr.us-east-1.amazonaws.com/website
     newTag: staging-9ed42421
   - name: auth
-    newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/auth
+    newName: 866409326838.dkr.ecr.us-east-1.amazonaws.com/auth
     newTag: v1.0.10
   - name: core
-    newName: 043309361013.dkr.ecr.us-east-1.amazonaws.com/core
+    newName: 866409326838.dkr.ecr.us-east-1.amazonaws.com/core
     newTag: v1.0.01
 
 # One replica is enough to serve UAT traffic — and it also keeps the two

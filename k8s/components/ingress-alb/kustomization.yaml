@@ -40,7 +40,7 @@ patches:
           # uat and prod share it. Set explicitly rather than relying on the
           # controller's host-based auto-discovery, which has nothing to match
           # while the prod overlay's hosts are commented out.
-          alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:043309361013:certificate/43fc6440-d2d6-4b46-b86d-bafab7378765
+          alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:866409326838:certificate/43fc6440-d2d6-4b46-b86d-bafab7378765
           # Fallback only, and every Service overrides it — each one mounts at
           # its own base path, so no single path is healthy on all of them
           # (/user is a 404 on employee-web). Per-Service annotations win; see
