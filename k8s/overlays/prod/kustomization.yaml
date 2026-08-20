@@ -31,16 +31,13 @@ namespace: prod
 images:
   - name: employee-web
     newName: 866409326838.dkr.ecr.us-east-1.amazonaws.com/website
-    newTag: staging-614b46c7
-  - name: user-web
-    newName: 866409326838.dkr.ecr.us-east-1.amazonaws.com/website
-    newTag: staging-332218de
+    newTag: v1.0.0
   - name: auth
     newName: 866409326838.dkr.ecr.us-east-1.amazonaws.com/auth
-    newTag: v1.0.10
+    newTag: v2.0.0
   - name: core
     newName: 866409326838.dkr.ecr.us-east-1.amazonaws.com/core
-    newTag: v1.0.01
+    newTag: v1.0.2
 
 patches:
   # The two production hostnames. Both need Route 53 ALIAS records pointing at
