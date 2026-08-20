@@ -11,12 +11,16 @@ resources:
 #
 # MUST MATCH THE TERRAFORM STACK THAT BUILT THE CLUSTER:
 #
-#   ../../components/aws-kubeadm   terraform/infra-kubeadm — ingress-nginx, NodePort
-#   ../../components/aws           terraform/infra (EKS)   — an ALB, IRSA-authenticated
+#   ../../components/aws-kubeadm   ingress-nginx on a NodePort — no ALB controller
+#   ../../components/aws           an ALB built by the AWS Load Balancer Controller
 #
-# The ALB controller authenticates with IRSA, which only EKS provides, so on the
-# kubeadm stack it is not installed and `ingressClassName: alb` is claimed by
-# nothing — the Ingress sits without an address and no controller logs why.
+# ../aws IS IN USE ON THE KUBEADM STACK, which the AWS docs treat as EKS-only.
+# The controller normally authenticates with IRSA — an EKS-managed OIDC provider
+# — so the workaround is static IAM keys in the `aws-alb-credentials` Secret,
+# plus `region` and `vpcId` passed to Helm explicitly because only EKS publishes
+# the cluster metadata it would otherwise read them from. LoadBalancerConfig.md
+# is the whole procedure; without it `ingressClassName: alb` is claimed by
+# nothing and the Ingress sits without an address, unexplained by any log.
 #
 # Exactly one edge component, and ../uat must agree: the two share a cluster, and
 # two ingress classes claiming the same hosts is resolved by whichever object was
@@ -25,7 +29,7 @@ resources:
 # It lives here rather than in the Makefile because Argo CD renders this file
 # straight from git and never runs make.
 components:
-  - ../../components/aws-kubeadm
+  - ../../components/aws
 
 namespace: prod
 images:

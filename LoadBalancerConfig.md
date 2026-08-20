@@ -152,16 +152,36 @@ ways to supply them, in descending order of preference:
 | Instance profile | Any EC2 node | Readable via IMDS by anything on the node. |
 | Static keys in a Secret | Anywhere | No rotation; needs `iam:CreatePolicy` only, not `iam:CreateRole`. |
 
-Both non-IRSA options need the AWS-published policy attached to the identity:
+Both non-IRSA options need the AWS-published policy attached to the identity.
+
+> **PIN ONE VERSION AND USE IT TWICE** — here, and for the chart in step 5.
+> Every controller release adds ELB/EC2 actions, so a policy older than the
+> running controller fails with `AccessDenied` **at the first reconcile**: never
+> at install, never in the startup logs, and only once a real Ingress exists.
+> This doc pinned the policy at v2.7.2 while the chart floated to latest, which
+> put a v2.7.2 policy under a v3.5.0 controller. Move both together or neither.
 
 ```sh
+LBC_VERSION=v3.5.0        # must match the GitVersion the controller logs at startup
+
 curl -o iam-policy.json \
-  https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.7.2/docs/install/iam_policy.json
+  "https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/${LBC_VERSION}/docs/install/iam_policy.json"
 
 aws iam create-policy \
   --policy-name AWSLoadBalancerControllerIAMPolicy \
   --policy-document file://iam-policy.json
 ```
+
+Updating a policy that already exists — `create-policy` fails once it does:
+
+```sh
+aws iam create-policy-version \
+  --policy-arn arn:aws:iam::866409326838:policy/AWSLoadBalancerControllerIAMPolicy \
+  --policy-document file://iam-policy.json --set-as-default
+```
+
+A managed policy holds at most 5 versions; `aws iam delete-policy-version` an
+old one if that errors.
 
 **Instance profile** — fewer moving parts, but see the warning below:
 
@@ -219,11 +239,23 @@ mapping is involved.
 helm repo add eks https://aws.github.io/eks-charts
 helm repo update
 
-helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+# THE CHART VERSION IS NOT THE CONTROLLER VERSION. Find the chart shipping the
+# $LBC_VERSION pinned in step 4 — column 2 is the chart, column 3 the app:
+helm search repo eks/aws-load-balancer-controller --versions \
+  | awk -v v="${LBC_VERSION#v}" '$3 == v'
+
+# upgrade --install, not install: re-running a plain `install` on an existing
+# release fails with "cannot re-use a name that is still in use" and changes
+# nothing, while `rollout status` below still reports the OLD pod as healthy.
+#
+# --version is what keeps the chart from floating to latest while the IAM policy
+# stays frozen at whatever step 4 fetched.
+helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
   -n kube-system \
+  --version <chart-version-from-the-search-above> \
   --set clusterName=kubernetes \
   --set region=us-east-1 \
-  --set vpcId=vpc-05b81b6a8bff35520
+  --set vpcId=vpc-0a10f079fdb9a18c3 \
   --set 'envFrom[0].secretRef.name=aws-alb-credentials'
 
 kubectl -n kube-system rollout status deploy/aws-load-balancer-controller

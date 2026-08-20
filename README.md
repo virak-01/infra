@@ -311,3 +311,10 @@ aws ssm start-session --target i-0bd2575115552d14b
 
 terraform -chdir=terraform/platform destroy      # only if you ever applied it
 terraform -chdir=terraform/infra-kubeadm destroy
+
+
+make deploy ENV=prod         # creates the namespace + CronJob + workloads
+make aws-creds ENV=prod      # re-enter the key — nothing was stored
+make ecr-secret ENV=prod
+make app-config ENV=prod
+make rollout ENV=prod
