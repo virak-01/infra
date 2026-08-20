@@ -84,8 +84,13 @@ aws ec2 create-tags --region us-east-1 \
               subnet-03ce7b03b9ef73529 subnet-0b85e993a6c4343b9 \
               subnet-0acc8d5ca35643cc9 subnet-0b09b7f7f8d3c49d6 \
   --tags Key=kubernetes.io/role/elb,Value=1 \
-         Key=kubernetes.io/cluster/kubernetes,Value=shared
+         Key=kubernetes.io/cluster/company-kubeadm,Value=shared
 ```
+
+> **Terraform already applied both tags** — see `modules/network/main.tf`, which
+> stamps `kubernetes.io/role/elb` and `kubernetes.io/cluster/${cluster_name}` on
+> every public subnet. Run the command above only for subnets Terraform does not
+> manage. Re-tagging the ones it does is harmless but pointless.
 
 **Tag all six, not the minimum two.** An ALB only delivers to nodes in an AZ
 that is enabled on the load balancer; a node in an un-enabled AZ registers
@@ -93,12 +98,21 @@ successfully and then sits permanently `unused`, which looks like a broken app
 rather than a placement problem. Tagging every AZ removes the failure mode, and
 an ALB spanning six AZs costs exactly what one spanning two costs.
 
-`<clusterName>` must match what you pass to Helm in step 5. kubeadm defaults to
-`kubernetes`:
+**`<clusterName>` IS NOT KUBEADM'S CLUSTER NAME.** It is an arbitrary label, and
+its only job is to match the subnet tag — so it must equal Terraform's
+`cluster_name` (`company-kubeadm`), NOT the `kubernetes` that kubeadm-config
+reports. Passing kubeadm's name instead is a silent failure: the controller
+authenticates, lists the subnets, rejects every one, and loops on
+
+```
+couldn't auto-discover subnets: unable to resolve at least one subnet.
+Evaluated 3 subnets: 3 are tagged for other clusters
+```
+
+Read the authoritative value from Terraform rather than from the cluster:
 
 ```sh
-kubectl -n kube-system get cm kubeadm-config \
-  -o jsonpath='{.data.ClusterConfiguration}' | grep clusterName
+grep cluster_name terraform/infra-kubeadm/terraform.tfvars
 ```
 
 ## 3. Security groups
@@ -253,7 +267,7 @@ helm search repo eks/aws-load-balancer-controller --versions \
 helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
   -n kube-system \
   --version <chart-version-from-the-search-above> \
-  --set clusterName=kubernetes \
+  --set clusterName=company-kubeadm \
   --set region=us-east-1 \
   --set vpcId=vpc-0a10f079fdb9a18c3 \
   --set 'envFrom[0].secretRef.name=aws-alb-credentials'
@@ -316,7 +330,7 @@ base path and the Ingress does not rewrite.
 
 ```sh
 aws elbv2 describe-target-groups --region us-east-1 \
-  --query 'TargetGroups[?VpcId==`vpc-05b81b6a8bff35520`].{Name:TargetGroupName,Port:Port,Path:HealthCheckPath}' \
+  --query 'TargetGroups[?VpcId==`vpc-0a10f079fdb9a18c3`].{Name:TargetGroupName,Port:Port,Path:HealthCheckPath}' \
   --output table
 ```
 

@@ -31,16 +31,35 @@ patches:
           # targets the node's NodePort instead, which is why the Service patch
           # below must set type: NodePort.
           alb.ingress.kubernetes.io/target-type: instance
-          # Port 80 stays listed. ssl-redirect works by installing a redirect
-          # action on the HTTP listener, so removing 80 leaves nothing to
-          # redirect from and plain-HTTP links fail instead of upgrading.
+          # BOTH LISTENERS, NO FORCED REDIRECT — see ssl-redirect below.
           alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
-          alb.ingress.kubernetes.io/ssl-redirect: '443'
-          # A wildcard cert covering the apex + *.devops-selft-learning.xyz, so
-          # uat and prod share it. Set explicitly rather than relying on the
-          # controller's host-based auto-discovery, which has nothing to match
-          # while the prod overlay's hosts are commented out.
-          alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:866409326838:certificate/43fc6440-d2d6-4b46-b86d-bafab7378765
+
+          # ssl-redirect IS DELIBERATELY ABSENT while ../../overlays/prod leaves
+          # its Ingress hostless. The certificate covers the domain and its
+          # wildcard, never the ALB's own *.elb.amazonaws.com hostname — so
+          # forcing every request to HTTPS makes prod unreachable by the only
+          # address it currently answers on. Serving both listeners without the
+          # redirect keeps that address working and still terminates TLS for
+          # anyone arriving on a real hostname.
+          #
+          # ADD IT BACK — `alb.ingress.kubernetes.io/ssl-redirect: '443'` — in
+          # the same change that uncomments the prod host patch, once external-dns
+          # has ALIAS records resolving to this ALB. uat already declares hosts
+          # and is unaffected either way.
+
+          # THE ACM CERTIFICATE, owned by terraform/modules/dns and written here
+          # by sync-manifests.sh — never edited by hand, because the ARN changes
+          # whenever the certificate is replaced:
+          #
+          #   ./script/sync-manifests.sh --check --stack infra-kubeadm
+          #   ./script/sync-manifests.sh --write --stack infra-kubeadm
+          #
+          # --stack matters: it defaults to `infra` (the EKS stack) and would
+          # read that cluster's outputs instead. A previous ARN left here after
+          # its certificate was destroyed cost an afternoon — the controller
+          # builds the ALB, then loops on CertificateNotFound with no listener,
+          # so the Ingress address never becomes usable.
+          alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:866409326838:certificate/5029fc73-8392-41fc-a938-d57242bdb47d
           # Fallback only, and every Service overrides it — each one mounts at
           # its own base path, so no single path is healthy on all of them
           # (/user is a 404 on employee-web). Per-Service annotations win; see
