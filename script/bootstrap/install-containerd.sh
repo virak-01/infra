@@ -154,6 +154,79 @@ install_kubernetes() {
   systemctl enable kubelet
 }
 
+# ------------------------------------------------------------------ provider ID
+#
+# WHY THIS EXISTS. Kubernetes does not know it is running on AWS. On EKS the cloud
+# provider fills in each Node's spec.providerID — the field that maps a node to its
+# EC2 instance — but kubeadm ships no cloud provider, so the field stays empty and
+# nothing complains until something needs that mapping.
+#
+# The AWS Load Balancer Controller needs it. With `target-type: instance` it has to
+# translate "node ip-10-40-24-143" into "instance i-093bd099366a37797", and
+# providerID is the ONLY field it will use. Empty means it can name no instance, so
+# every TargetGroupBinding reconcile fails with
+#
+#   providerID is not specified for node: <name>
+#
+# the target groups stay empty, and the ALB answers 503 on every path. Worse, the
+# controller aborts the whole reconcile at the FIRST node missing the field, so one
+# unconfigured node keeps the entire ingress down. See docs/alb-ingress.md.
+#
+# THIS MUST RUN BEFORE THE NODE REGISTERS. spec.providerID is immutable once the
+# Node object exists — setting it afterwards is refused by the API server, and the
+# only remedy is to drain, delete and rejoin the node. So it is called before
+# `kubeadm init` and `kubeadm join`, never after.
+#
+# /etc/default/kubelet is the documented seam. kubeadm's own drop-in at
+# /etc/systemd/system/kubelet.service.d/10-kubeadm.conf carries
+# `EnvironmentFile=-/etc/default/kubelet` and passes $KUBELET_EXTRA_ARGS through to
+# the kubelet, so a flag placed here survives kubeadm regenerating its own config.
+# Nothing else in this repo writes that file; the bootstrap owns it.
+configure_provider_id() {
+  local token az iid provider_id
+
+  # IMDSv1 is disabled on these instances, so the token is mandatory, not optional.
+  if ! token=$(curl -sf -X PUT "http://169.254.169.254/latest/api/token" \
+    -H "X-aws-ec2-metadata-token-ttl-seconds: 300"); then
+    log "ERROR: no IMDSv2 token. Not an EC2 instance, or IMDS is blocked."
+    return 1
+  fi
+
+  az=$(curl -sf -H "X-aws-ec2-metadata-token: ${token}" \
+    http://169.254.169.254/latest/meta-data/placement/availability-zone || echo "")
+  iid=$(curl -sf -H "X-aws-ec2-metadata-token: ${token}" \
+    http://169.254.169.254/latest/meta-data/instance-id || echo "")
+
+  if [[ -z "$az" || -z "$iid" ]]; then
+    log "ERROR: IMDS returned no availability-zone or instance-id"
+    return 1
+  fi
+
+  # THREE slashes. The empty segment between the second and third is where a region
+  # would go and is intentionally blank — `aws://<az>/<id>` with two is not a valid
+  # providerID and the kubelet will register with a malformed value.
+  provider_id="aws:///${az}/${iid}"
+
+  if [[ -f /etc/default/kubelet ]] && grep -qF -- "--provider-id=${provider_id}" /etc/default/kubelet; then
+    log "provider-id already set to ${provider_id}"
+  else
+    log "setting kubelet provider-id to ${provider_id}"
+    printf 'KUBELET_EXTRA_ARGS=--provider-id=%s\n' "${provider_id}" >/etc/default/kubelet
+    chmod 0644 /etc/default/kubelet
+    systemctl daemon-reload
+  fi
+
+  # A node that has already joined keeps whatever providerID it registered with,
+  # because the field is immutable. Say so plainly rather than let the flag above
+  # imply a fix that did not happen.
+  if [[ -f /etc/kubernetes/kubelet.conf ]]; then
+    log "NOTE: this node has already joined. spec.providerID cannot be changed on an"
+    log "  existing Node object — the flag applies only to a fresh registration."
+    log "  Check the live value with:"
+    log "    kubectl get node $(hostname) -o jsonpath='{.spec.providerID}'"
+  fi
+}
+
 main() {
   if [[ $EUID -ne 0 ]]; then
     echo "ERROR: must run as root" >&2
@@ -164,6 +237,7 @@ main() {
   disable_swap
   install_containerd
   install_kubernetes
+  configure_provider_id
 
   log "node prerequisites ready"
 }

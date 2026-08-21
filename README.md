@@ -202,6 +202,8 @@ fails any overlay that renders an untagged image, since that resolves to
 | [Security](docs/security.md) | Pod Security Standards, the two NetworkPolicies, the CNI caveat, what is still outstanding |
 | [Argo CD](docs/argocd.md) | installing it, the Application, why sync is manual, sync waves |
 | [EC2 testing](docs/ec2-testing.md) | a throwaway k3s box: security groups, the single-node trap, and testing the egress policy against real instance metadata |
+| [kubectl access](docs/kubectl-access.md) | reaching `company-kubeadm-prod` — SSM (there is no SSH key pair), the `localhost:8080` trap, and the stale cert SAN |
+| [ALB ingress](docs/alb-ingress.md) | why the ALB returned 503 — missing node `providerID` on kubeadm — and the cross-node pod networking fault behind the 504s |
 
 ## Requirements
 

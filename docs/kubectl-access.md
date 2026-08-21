@@ -166,6 +166,8 @@ Nothing in the cluster itself was modified. No certificates were regenerated.
 
 ## Still outstanding
 
+**The ALB returns 503/504.** Tracked separately in [alb-ingress.md](alb-ingress.md): node `providerID` was unset (now fixed), and cross-node pod networking between the two workers is still broken.
+
 **`cluster-autoscaler` is in CrashLoopBackOff** (50 restarts). Two independent
 reasons, both infrastructure gaps rather than cluster problems:
 

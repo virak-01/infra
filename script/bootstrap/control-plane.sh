@@ -70,6 +70,11 @@ disable_swap
 install_containerd
 install_kubernetes
 
+# Sets spec.providerID via a kubelet flag BEFORE the node registers. The field is
+# immutable once the Node object exists, and the AWS Load Balancer Controller
+# cannot register instance targets without it. See install-containerd.sh.
+configure_provider_id
+
 # --------------------------------------------------------------- kubeadm init
 #
 # IDEMPOTENCY GATE. admin.conf exists only after a successful init, so its presence
