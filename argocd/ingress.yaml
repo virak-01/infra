@@ -1,0 +1,119 @@
+# Argo CD UI on an ALB.
+#
+#   kubectl apply -f argocd/ingress.yaml
+#
+# Like the two Applications beside it, this is applied ONCE BY HAND — argocd/ is
+# outside the synced path, so nothing reconciles it and re-applying after an edit
+# is on you.
+#
+# ─── READ THIS BEFORE APPLYING ────────────────────────────────────────────────
+#
+# AN INTERNET-FACING ARGO CD IS A CLUSTER TAKEOVER WAITING TO HAPPEN. It holds
+# credentials for every environment and can apply arbitrary manifests to them, so
+# it is a strictly larger prize than any single app behind the other ALB.
+# docs/argocd.md recommends `kubectl port-forward` for exactly this reason, and
+# that recommendation stands — this file is the alternative for when a stable URL
+# is worth the exposure, not an upgrade over it.
+#
+# inbound-cidrs below is what makes that trade defensible: the ALB refuses every
+# other source address, so a leaked admin password is not by itself enough. IT IS
+# A PLACEHOLDER AND MUST BE SET. Leaving the annotation off entirely means
+# 0.0.0.0/0 — the admin UI of the cluster, open to the internet.
+#
+# ─── THREE PREREQUISITES ──────────────────────────────────────────────────────
+#
+# 1. argocd-server MUST BE NodePort. It installs as ClusterIP, which has no node
+#    port for `target-type: instance` to register, and the target group comes up
+#    empty with no error naming the cause:
+#
+#      kubectl -n argocd patch svc argocd-server -p '{"spec":{"type":"NodePort"}}'
+#
+#    Argo CD's own install manifest owns that Service, so the patch is undone by
+#    a reinstall or upgrade. Re-apply it after either.
+#
+# 2. DNS FOR THE HOST BELOW IS NOT AUTOMATIC HERE. external-dns writes records
+#    from Ingress hosts, but terraform/platform defaults it OFF on the kubeadm
+#    stack (`enable_external_dns` — null means on for EKS, off for this one). So
+#    either enable it there, or add the Route 53 ALIAS by hand once the ALB
+#    exists. Until one of those, the name does not resolve — and reaching the ALB
+#    by its own *.elb.amazonaws.com hostname fails certificate validation, since
+#    the cert covers the domain and its wildcard and nothing else.
+#
+# 3. THIS BUILDS A SECOND ALB, roughly another USD 16/month. company-web's
+#    Ingress carries no `group.name`, so it sits in its own implicit group and
+#    cannot be shared without adding that annotation to BOTH — which rebuilds the
+#    production load balancer. A separate one is the cheaper change, if not the
+#    cheaper bill.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd-server
+  namespace: argocd
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+
+    # `instance`, for the same reason k8s/components/ingress-alb gives: Calico's
+    # pod addresses are not VPC-routable, so `ip` targets are unreachable from an
+    # ALB. This is what requires prerequisite 1 above.
+    alb.ingress.kubernetes.io/target-type: instance
+
+    # THE ALB MUST SPEAK HTTPS TO THE BACKEND. argocd-server terminates TLS
+    # itself with a self-signed certificate and redirects plain HTTP to HTTPS, so
+    # an HTTP backend produces a redirect loop the browser gives up on — ERR_TOO_
+    # MANY_REDIRECTS, with a healthy target group and nothing in any log. The
+    # self-signed cert is not a problem: the ALB does not verify backend
+    # certificates.
+    #
+    # The alternative is running argocd-server with --insecure and switching this
+    # to HTTP. Fine on a private network, worse here — it would put the session
+    # cookie in clear text between the ALB and the node.
+    alb.ingress.kubernetes.io/backend-protocol: HTTPS
+
+    # HTTPS ONLY. Unlike the app ALB, there is no reason to answer on 80: every
+    # request carries an admin session, and there is no plain-HTTP client to keep
+    # working. No ssl-redirect either, because with no HTTP listener there is
+    # nothing to redirect from.
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+
+    # The wildcard cert from terraform/modules/dns, covering *.devops-selft-learning.xyz.
+    # Unlike k8s/components/ingress-alb, sync-manifests.sh does NOT rewrite this
+    # file — argocd/ is not in the paths it walks. Update it by hand when the
+    # certificate is replaced, and expect CertificateNotFound with no listener if
+    # you forget.
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:866409326838:certificate/3c168ea7-57fc-4e74-9338-6a9ff773f71d
+
+    # /healthz is unauthenticated and returns 200; / redirects to the login page,
+    # which the ALB reads as unhealthy. The protocol has to be restated because
+    # health checks default to HTTP regardless of backend-protocol.
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTPS
+    alb.ingress.kubernetes.io/success-codes: '200'
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SET THIS BEFORE APPLYING. Your own address, from:
+    #
+    #   curl -s https://checkip.amazonaws.com
+    #
+    # Removing the annotation does not "open it a little" — it opens it to
+    # everyone. Add each operator's /32 rather than widening to a range.
+    alb.ingress.kubernetes.io/inbound-cidrs: 203.0.113.0/32
+    # ─────────────────────────────────────────────────────────────────────────
+spec:
+  ingressClassName: alb
+  rules:
+    # Covered by the wildcard on the certificate above. A host is required, not
+    # optional: a hostless rule on an internet-facing ALB answers to any Host
+    # header, including the ALB's own name, which puts the login page somewhere
+    # the certificate does not cover.
+    - host: argocd.devops-selft-learning.xyz
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argocd-server
+                # The Service's `https` port. Named ports are not accepted by
+                # every controller version; 443 is unambiguous.
+                port:
+                  number: 443
